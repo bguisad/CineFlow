@@ -47,8 +47,8 @@
 
 支持环境：
 
-- Windows 10 / Windows 11 / Mac
-- x64 架构
+- Windows 10 / Windows 11 / macOS / Linux（AppImage）
+- Linux AppImage：x86_64；下载后执行 `chmod +x CineFlow-*-x86_64.AppImage`，再运行该文件（无需安装）
 
 ## 快速开始
 

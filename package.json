@@ -13,7 +13,8 @@
         "build:win": "npm run build && electron-builder --win nsis --config.win.signAndEditExecutable=false --publish never",
         "build:win:dir": "npm run build && electron-builder --win dir --config.win.signAndEditExecutable=false --publish never",
         "pack:portable": "npm run build && electron-builder --win portable --config.win.signAndEditExecutable=false --publish never",
-        "build:mac": "npm run build && electron-builder --mac --publish never"
+        "build:mac": "npm run build && electron-builder --mac --publish never",
+        "build:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never"
     },
     "build": {
         "appId": "com.debu8ger.cineflow",
@@ -70,6 +71,19 @@
                     "target": "zip",
                     "arch": [
                         "arm64",
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "CineFlow-${version}-${arch}.${ext}"
+        },
+        "linux": {
+            "icon": "build/icon.png",
+            "category": "AudioVideo",
+            "target": [
+                {
+                    "target": "AppImage",
+                    "arch": [
                         "x64"
                     ]
                 }

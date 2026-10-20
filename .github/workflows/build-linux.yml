@@ -1,0 +1,67 @@
+name: Build Linux AppImage
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload to; leave blank for V<package.json version>'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Linux AppImage (x64)
+        run: npm run build:linux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineFlow-linux-x64
+          path: release/*.AppImage
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        if: github.event_name != 'pull_request'
+        id: rel
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=V$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          files: release/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
