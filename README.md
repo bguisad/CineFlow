@@ -141,6 +141,18 @@ CineFlow/
 └─ README.md
 ```
 
+## Star增长
+
+<a href="https://www.star-history.com/?repos=incldue%2Fcineflow&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=incldue/cineflow&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=incldue/cineflow&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=incldue/cineflow&type=date&legend=top-left" />
+ </picture>
+</a>
+
+
+
 ## License
 
 本项目基于 [MIT License](LICENSE) 开源。
