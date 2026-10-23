@@ -10351,3 +10351,1591 @@ body.island-docked-mode .cf3-stage {
     transition-duration: 1ms !important;
   }
 }
+
+/* =====================================================================
+   v3.4.2 纯增量层：TMDB 应用内一键凭证向导（全部 cf6- 前缀，单行紧凑版）
+   摘除办法：删 src/tmdb-wizard.js、electron/tmdb-auth.cjs，去掉 incremental-pages.js 里
+   import/init 这 2 行挂钩、main.cjs 末尾的 tmdbAuth 段与 preload 的 4 行 API，
+   再删掉下面这一段即可，基线样式与页面结构没有任何改动。
+   刻意不声明 app-region：拖拽区仍归基线标题栏。
+   ===================================================================== */
+label[for="apiCredentialInput"],
+#apiCredentialInput {
+  display: none !important;
+}
+
+.cf6-auth {
+  --cf6-line: rgba(255, 255, 255, 0.1);
+  --cf6-accent: #9e8eff;
+  --cf6-champagne: #dae2ff;
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--cf6-line);
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+}
+
+.cf6-auth-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.cf6-auth-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f3f5fa;
+  white-space: nowrap;
+  transition: color 240ms var(--cf3-ease-expo), text-shadow 240ms var(--cf3-ease-expo);
+}
+
+/* 凭证到手后"TMDB 凭证"整块高亮：颜色 + 光晕 + 前置对勾，一眼能看出已经好了 */
+.cf6-auth.is-ready .cf6-auth-title {
+  color: var(--cf6-accent);
+  text-shadow: 0 0 16px rgba(158, 142, 255, 0.5);
+}
+
+.cf6-auth.is-ready .cf6-auth-title::before {
+  content: "✓";
+  margin-right: 6px;
+  font-size: 12px;
+  color: var(--cf6-accent);
+}
+
+.cf6-auth.is-ready {
+  border-color: rgba(158, 142, 255, 0.3);
+  box-shadow: 0 0 0 1px rgba(158, 142, 255, 0.07), 0 10px 28px -18px rgba(158, 142, 255, 0.5);
+}
+
+.cf6-auth-state {
+  padding: 2px 8px;
+  border: 1px solid var(--cf6-line);
+  border-radius: 999px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: #93a0b4;
+  background: rgba(255, 255, 255, 0.03);
+  white-space: nowrap;
+}
+
+.cf6-auth-state[data-state="token"] {
+  color: var(--cf6-champagne);
+  border-color: rgba(158, 142, 255, 0.38);
+  background: rgba(158, 142, 255, 0.13);
+}
+
+.cf6-auth-state[data-state="key"] {
+  color: #b9c6da;
+  border-color: rgba(185, 198, 218, 0.26);
+  background: rgba(185, 198, 218, 0.07);
+}
+
+.cf6-auth-actions {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.cf6-auth-btn,
+.cf6-auth-paste {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform var(--cf3-dur-open) var(--cf3-ease-expo);
+}
+
+.cf6-auth-btn {
+  border: 1px solid rgba(158, 142, 255, 0.5);
+  background: linear-gradient(135deg, rgba(158, 142, 255, 0.92), rgba(108, 92, 224, 0.92));
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 6px 16px -8px rgba(158, 142, 255, 0.8);
+}
+
+.cf6-auth-btn:hover {
+  transform: translateY(-1px);
+}
+
+.cf6-auth-paste {
+  border: 1px solid var(--cf6-line);
+  background: rgba(255, 255, 255, 0.04);
+  color: #a9b6c9;
+}
+
+.cf6-auth-paste:hover {
+  color: var(--cf6-champagne);
+  border-color: rgba(158, 142, 255, 0.34);
+}
+
+/* 进行中只多出一行：转圈 + 五段进度轨 + 一句话 + 取消 */
+.cf6-auth-run {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  animation: cf6RunIn 220ms var(--cf3-ease-expo) both;
+}
+
+.cf6-auth-run[hidden] {
+  display: none;
+}
+
+.cf6-ring {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+}
+
+.cf6-ring i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(158, 142, 255, 0.2);
+  border-top-color: var(--cf6-accent);
+  animation: cf6Spin 900ms linear infinite;
+}
+
+.cf6-auth.is-error .cf6-ring i {
+  border-top-color: #ff9a9a;
+  animation-play-state: paused;
+}
+
+.cf6-rail {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.cf6-rail i {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 220ms var(--cf3-ease-expo), box-shadow 220ms var(--cf3-ease-expo);
+}
+
+.cf6-rail i.is-done {
+  background: rgba(158, 142, 255, 0.5);
+}
+
+.cf6-rail i.is-active {
+  background: var(--cf6-accent);
+  box-shadow: 0 0 10px rgba(158, 142, 255, 0.7);
+  animation: cf6Pulse 1.5s var(--cf3-ease-expo) infinite;
+}
+
+.cf6-auth-msg {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #93a0b4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf6-auth.is-error .cf6-auth-msg {
+  color: #ff9a9a;
+  white-space: normal;
+}
+
+.cf6-auth-cancel {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: #6c7a91;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.cf6-auth-cancel:hover {
+  color: var(--cf6-champagne);
+}
+
+@keyframes cf6Spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cf6Pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(158, 142, 255, 0.5); }
+  50% { box-shadow: 0 0 0 3px rgba(158, 142, 255, 0.12); }
+}
+
+@keyframes cf6RunIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 窄窗（<900px 时设置卡退回单栏）下按钮换行，不挤压标题 */
+@media (max-width: 900px) {
+  .cf6-auth-main {
+    flex-wrap: wrap;
+  }
+  .cf6-auth-actions {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf6-ring i {
+    animation-duration: 2.4s;
+  }
+  .cf6-rail i.is-active {
+    animation: none;
+  }
+  .cf6-auth-run {
+    animation: none;
+  }
+}
+
+/* =====================================================================
+   v3.4.2 纯增量层：首页搜索框的搜索记录弹窗（全部 cf7- 前缀）
+   玻璃质感复用收藏页那套配方（rgba(5,7,16,.82) + blur(16px) saturate(1.08)
+   + 多层内高光阴影 + 9px 旋转小箭头）。
+   摘除办法：删 src/search-history.js 与 incremental-pages.js 里那 2 行挂钩，
+   再删掉下面这一段即可，基线样式与页面结构没有任何改动。
+   刻意不声明 app-region：拖拽区只归基线 .titlebar。
+   ===================================================================== */
+.cf7-history {
+  position: absolute;
+  z-index: 31;
+  padding: 8px 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 80% at 18% -12%, rgba(158, 142, 255, 0.10) 0%, rgba(158, 142, 255, 0) 62%),
+    radial-gradient(92% 70% at 100% 0%, rgba(218, 226, 255, 0.05) 0%, rgba(218, 226, 255, 0) 60%),
+    linear-gradient(180deg, rgba(12, 14, 24, 0.9), rgba(5, 7, 16, 0.86));
+  backdrop-filter: blur(16px) saturate(1.08);
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.46),
+    -8px 0 28px rgba(158, 142, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 0 1px rgba(218, 226, 255, 0.03);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.94) translateY(-10px);
+  transform-origin: var(--cf7-caret-x, 24%) top;
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--cf3-ease-exit),
+    transform 160ms var(--cf3-ease-exit),
+    visibility 0s linear 160ms;
+}
+
+.cf7-history.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity var(--cf3-dur-open) var(--cf3-ease-reveal),
+    transform 240ms cubic-bezier(0.34, 1.4, 0.5, 1),
+    visibility 0s;
+}
+
+/* 朝上的小箭头，指着搜索框中心 */
+.cf7-history::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: var(--cf7-caret-x, 24%);
+  width: 9px;
+  height: 9px;
+  transform: translateX(-50%) rotate(45deg);
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  border-left: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 3px;
+  background: rgba(11, 13, 22, 0.94);
+}
+
+.cf7-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px 7px;
+}
+
+.cf7-history-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: rgba(147, 160, 180, 0.82);
+}
+
+.cf7-history-clear {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: #6c7a91;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.cf7-history-clear:hover {
+  color: var(--cf6-champagne, #dae2ff);
+}
+
+.cf7-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.cf7-history-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  color: #dfe5f1;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, transform var(--cf3-dur-open) var(--cf3-ease-expo);
+}
+
+.cf7-history-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateX(2px);
+}
+
+.cf7-history-item > span:nth-child(2) {
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf7-history-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+.cf7-history-del {
+  flex: 0 0 auto;
+  width: 20px;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  color: #6c7a91;
+  opacity: 0;
+  transition: opacity 160ms ease, color 160ms ease;
+}
+
+.cf7-history-item:hover .cf7-history-del {
+  opacity: 1;
+}
+
+.cf7-history-del:hover {
+  color: #ff9a9a;
+}
+
+@media (max-width: 900px) {
+  .cf7-history {
+    border-radius: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf7-history,
+  .cf7-history.is-open {
+    transform: none;
+    transition-duration: 1ms;
+  }
+  .cf7-history-item:hover {
+    transform: none;
+  }
+}
+
+/* ================= v3.4.2 第十八轮：豆瓣兜底（cf8，纯增量追加） =================
+   只覆盖新增的 .cf8-* 节点：无 TMDB 凭证时的首页豆瓣片单、豆瓣资料卡、海报淡入。
+   不声明任何 app-region（拖拽区仍只归 .titlebar）。 */
+.cf8-rail{display:flex;flex-direction:column;gap:12px;padding:2px 0 4px;width:100%}
+.cf8-rail-head{display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.02em;color:rgba(233,236,255,.62)}
+.cf8-badge{padding:2px 8px;border-radius:999px;font-size:11px;line-height:16px;color:#c8ffdc;background:rgba(46,196,113,.14);border:1px solid rgba(46,196,113,.28)}
+.cf8-cards{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 10px;scroll-behavior:smooth}
+.cf8-cards::-webkit-scrollbar{height:6px}
+.cf8-cards::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:999px}
+.cf8-card{flex:0 0 148px;display:flex;flex-direction:column;gap:8px;cursor:pointer;outline:none}
+.cf8-frame{position:relative;aspect-ratio:2/3;border-radius:16px;overflow:hidden;background:linear-gradient(160deg,rgba(28,32,58,.9),rgba(12,14,26,.95));border:1px solid rgba(255,255,255,.07);box-shadow:0 12px 26px rgba(0,0,0,.35);transition:transform .22s cubic-bezier(.34,1.2,.5,1),box-shadow .22s ease}
+.cf8-card:hover .cf8-frame,.cf8-card:focus-visible .cf8-frame{transform:translateY(-3px);box-shadow:0 18px 34px rgba(0,0,0,.45)}
+.cf8-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cf8-ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:rgba(233,236,255,.35);letter-spacing:.12em}
+.cf8-poster-loaded{animation:cf8Fade .32s ease both}
+.cf8-card h3{margin:0;font-size:13px;font-weight:600;line-height:1.35;color:#eef0ff;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cf8-card p{margin:0;font-size:11px;color:rgba(233,236,255,.5)}
+@keyframes cf8Fade{from{opacity:0}to{opacity:1}}
+.cf8-sheet{position:fixed;inset:0;z-index:64;display:flex;align-items:center;justify-content:center;background:rgba(4,6,14,.58);backdrop-filter:blur(10px);opacity:0;pointer-events:none;transition:opacity .18s ease}
+.cf8-sheet.is-open{opacity:1;pointer-events:auto}
+.cf8-sheet-card{position:relative;display:flex;gap:20px;width:min(600px,calc(100vw - 64px));max-height:min(78vh,620px);padding:22px;border-radius:22px;background:linear-gradient(165deg,rgba(20,24,44,.94),rgba(9,11,22,.96));border:1px solid rgba(255,255,255,.08);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);transform:translateY(8px) scale(.98);transition:transform .2s cubic-bezier(.34,1.2,.5,1)}
+.cf8-sheet.is-open .cf8-sheet-card{transform:none}
+.cf8-sheet-close{position:absolute;top:12px;right:14px;width:28px;height:28px;border:none;border-radius:10px;background:rgba(255,255,255,.06);color:#cfd3ee;font-size:16px;cursor:pointer}
+.cf8-sheet-poster{position:relative;flex:0 0 150px;aspect-ratio:2/3;border-radius:14px;overflow:hidden;background:linear-gradient(160deg,rgba(28,32,58,.9),rgba(12,14,26,.95))}
+.cf8-sheet-poster img{width:100%;height:100%;object-fit:cover}
+.cf8-sheet-ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(233,236,255,.3);font-size:12px;letter-spacing:.2em}
+.cf8-sheet-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;padding-right:6px}
+.cf8-sheet-title{margin:0;font-size:18px;color:#f4f5ff}
+.cf8-sheet-meta,.cf8-sheet-note{margin:0;font-size:12px;color:rgba(233,236,255,.55)}
+.cf8-sheet-intro{margin:0;font-size:12.5px;line-height:1.65;color:rgba(233,236,255,.78)}
+.cf8-sheet-cast{margin:0;font-size:12px;line-height:1.6;color:rgba(233,236,255,.6);white-space:pre-line}
+.cf8-sheet-note{margin-top:auto;opacity:.55}
+@media (max-width:720px){.cf8-sheet-card{flex-direction:column;max-height:82vh}.cf8-sheet-poster{flex-basis:auto;width:120px}}
+
+/* ================= v3.4.2 第十九轮：搜索记录改用设置页鸿蒙气泡 + 标签云（cf9，纯增量追加） =================
+   气泡配方逐值复用设置页的 .cf4-bubble：rgba(24,27,43,.88) + blur(18px) saturate(1.5)
+   + 18px 大圆角 + 1px 半透明描边 + 20/44 投影 + 9px 旋转 45° 小箭头。
+   词条区改成 flex-wrap 的气泡云（参考博客标签云/词云通行做法：字号、字重、亮度随权重分级，
+   用换行流而不是绝对定位，避免重叠与不可选中）；删除图标只在悬浮/键盘聚焦时出现。 */
+.cf7-history {
+  padding: 10px 10px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 18px;
+  background: rgba(24, 27, 43, 0.88);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.42), 0 2px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+.cf7-history::before {
+  width: 9px;
+  height: 9px;
+  border-top-color: rgba(255, 255, 255, 0.13);
+  border-left-color: rgba(255, 255, 255, 0.13);
+  border-radius: 3px;
+  background: rgba(24, 27, 43, 0.88);
+}
+
+.cf7-history-head {
+  padding: 2px 5px 8px;
+}
+
+.cf7-history-title {
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.cf7-history-clear {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.cf7-history-clear:hover {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* 词云：换行流 + 居中，词条宽度自适应 */
+.cf7-history-list {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 9px;
+  max-height: 300px;
+  padding: 3px 2px 5px;
+  overflow-y: auto;
+}
+
+.cf7-history-item {
+  position: relative;
+  flex: 0 0 auto;
+  gap: 0;
+  width: auto;
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  font-size: var(--cf9-size, 13px);
+  font-weight: var(--cf9-weight, 500);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, var(--cf9-alpha, 0.78));
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 200ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+.cf7-history-item:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 1);
+  transform: translateY(-1px) scale(1.04);
+}
+
+.cf7-history-icon {
+  display: none;
+}
+
+.cf7-history-item > span:nth-child(2) {
+  flex: 0 0 auto;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* 悬浮才出现的删除角标：绝对定位在右上角，不占词条宽度 */
+.cf7-history-del {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 92, 112, 0.94);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  opacity: 0;
+  transform: scale(0.5);
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 160ms cubic-bezier(0.34, 1.6, 0.5, 1);
+}
+
+.cf7-history-item:hover .cf7-history-del,
+.cf7-history-item:focus-visible .cf7-history-del {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.cf7-history-del:hover {
+  background: rgba(255, 116, 132, 1);
+  color: #fff;
+}
+
+/* 触屏没有 hover：角标常驻，避免删不掉 */
+@media (hover: none) {
+  .cf7-history-del {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .cf7-history {
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf7-history-item,
+  .cf7-history-item:hover {
+    transform: none;
+    transition-duration: 1ms;
+  }
+}
+
+/* ================= v3.4.2 第二十轮：搜索记录词条去掉胶囊、改纯文字（cf10，纯增量追加） =================
+   气泡本体仍是 cf9 复用设置页 .cf4-bubble 的那套；这里只把词条从"胶囊"改成纯文字：
+   无底色、无描边、无圆角，只保留点击热区；颜色由词条哈希给色相（同词同色），
+   点击次数越多越亮越饱和，字号/字重仍按 hits 分级。删除角标照旧只在悬浮/聚焦时出现。 */
+.cf7-history-list {
+  gap: 9px 16px;
+  padding: 4px 4px 6px;
+}
+
+.cf7-history-item {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: hsl(var(--cf9-hue, 220) var(--cf9-sat, 58%) var(--cf9-light, 79%));
+  text-shadow: 0 0 14px hsl(var(--cf9-hue, 220) var(--cf9-sat, 58%) 70% / 0.16);
+  transition:
+    color 160ms ease,
+    text-shadow 160ms ease,
+    transform 200ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+.cf7-history-item:hover {
+  background: none;
+  border-color: transparent;
+  color: hsl(var(--cf9-hue, 220) calc(var(--cf9-sat, 58%) + 8%) calc(var(--cf9-light, 79%) + 5%));
+  text-shadow: 0 0 18px hsl(var(--cf9-hue, 220) var(--cf9-sat, 58%) 70% / 0.32);
+  transform: translateY(-1px) scale(1.03);
+}
+
+.cf7-history-item:focus-visible {
+  outline: 1px dashed hsl(var(--cf9-hue, 220) var(--cf9-sat, 58%) 70% / 0.55);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+/* 纯文字后角标贴近文字右上角；仍是悬浮才出现 */
+.cf7-history-del {
+  top: -7px;
+  right: -10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf7-history-item:hover {
+    transform: none;
+  }
+}
+
+/* ================= v3.4.2 第二十一轮：删除角标不被"搜索记录"头层挡住（cf11，纯增量追加） =================
+   角标是绝对定位在词条右上角、向外探出 8~11px 的，而词条列表本身是滚动容器
+   （overflow-y:auto 会让 overflow-x 也变成 auto），所以第一行/最右侧的角标会被裁掉；
+   头部"搜索记录"又在同一层叠上下文里先绘制。这里给列表留出内边距让角标落在容器内，
+   并用层级保证悬浮那条永远盖在兄弟节点与头部之上。 */
+.cf7-history-head {
+  position: relative;
+  z-index: 1;
+}
+
+.cf7-history-list {
+  position: relative;
+  z-index: 2;
+  padding: 16px 16px 8px;
+  gap: 10px 18px;
+  max-height: 336px;
+}
+
+.cf7-history-item:hover,
+.cf7-history-item:focus-visible {
+  z-index: 6;
+}
+
+.cf7-history-del {
+  top: -8px;
+  right: -11px;
+  z-index: 7;
+}
+
+/* =====================================================================
+   v3.4.2 第二十二轮纯增量层：TMDB 一键获取改弹鸿蒙气泡（cf12-，纯追加）
+   卡片那一行只留「一键获取」，进度轨/状态/取消全部搬进气泡；
+   气泡外壳复用设置页 cf4 那套磨砂配方，内部继续吃 cf6 的按钮与进度轨样式。
+   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
+   ===================================================================== */
+.cf12-bubble {
+  position: absolute;
+  z-index: 45;
+  width: 292px;
+  padding: 11px 13px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 18px;
+  background: rgba(24, 27, 43, 0.88);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.42), 0 2px 0 rgba(255, 255, 255, 0.05) inset;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.86) translateY(-8px);
+  transform-origin: var(--cf12-caret-x, 88%) -8px;
+  transition: opacity var(--cf3-dur-close) var(--cf3-ease-exit),
+    transform var(--cf3-dur-open) cubic-bezier(0.34, 1.4, 0.5, 1),
+    visibility 0s linear var(--cf3-dur-close);
+}
+
+.cf12-bubble.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity var(--cf3-dur-open) var(--cf3-ease-reveal),
+    transform var(--cf3-dur-open) cubic-bezier(0.34, 1.4, 0.5, 1),
+    visibility 0s linear 0s;
+}
+
+.cf12-bubble::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: var(--cf12-caret-x, 88%);
+  width: 9px;
+  height: 9px;
+  transform: translateX(-50%) rotate(45deg);
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  border-left: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 3px;
+  background: rgba(24, 27, 43, 0.88);
+}
+
+.cf12-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.cf12-title {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #93a0b4;
+}
+
+.cf12-close {
+  margin-left: auto;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font-size: 15px;
+  line-height: 1;
+  color: #6c7a91;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.cf12-close:hover {
+  color: #dae2ff;
+}
+
+.cf12-idle {
+  display: flex;
+  gap: 8px;
+}
+
+.cf12-idle[hidden] {
+  display: none;
+}
+
+.cf12-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 9px;
+}
+
+.cf12-run[hidden] {
+  display: none;
+}
+
+.cf12-run .cf6-rail {
+  flex: 0 1 auto;
+}
+
+.cf12-run .cf6-auth-cancel {
+  order: 2;
+  margin-left: auto;
+}
+
+.cf12-run .cf6-auth-msg {
+  order: 3;
+  flex: 1 1 100%;
+  white-space: normal;
+  text-overflow: clip;
+  color: #a9b6c9;
+}
+
+.cf12-bubble.is-error .cf6-auth-msg {
+  color: #ff9a9a;
+}
+
+.cf12-bubble.is-error .cf6-ring i {
+  border-top-color: #ff9a9a;
+  animation-play-state: paused;
+}
+
+@media (max-width: 900px) {
+  .cf12-bubble {
+    width: min(292px, 78vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf12-bubble {
+    transition-duration: 1ms;
+  }
+}
+
+/* =====================================================================
+   v3.4.2 第二十三轮纯增量层：三页之间每一路切换都跑同一套过渡（cf13-，纯追加）
+   实测根因：切进一个"从没画过的整屏板"时，合成器要临场建层 + 整页栅格化，
+   动效头 240~380ms 全被这件事吃掉（同步 JS 只花 0~14ms、零长任务），
+   观感就是"只有跟首页交界那两路有动效，分类↔历史像直接切页"。
+   做法：挂载即常驻提层（cf3-warm）+ 空闲时把隐藏页露 1.2% 逼一次栅格化，
+   并且入场页先画一帧再挂动画类。cf3 原有键帧一个字没改。
+   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
+   ===================================================================== */
+.cf3-page.cf3-warm {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* =====================================================================
+   v3.4.2 第二十四轮纯增量层：TMDB 申请草稿 + 逐条一键复制（cf14-，纯追加）
+   草稿只产出文本与"打开官方申请页"，应用不加载、不注入、不代填第三方页面：
+   条款勾选 / 提交 / CAPTCHA / 邮箱验证一律由用户本人在浏览器里完成。
+   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
+   ===================================================================== */
+.cf12-draft {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.cf12-draft[hidden] {
+  display: none;
+}
+
+.cf12-draft-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cf12-draft-toggle,
+.cf12-draft-open {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #93a0b4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.cf12-draft-toggle:hover,
+.cf12-draft-open:hover {
+  color: #dae2ff;
+  border-color: rgba(158, 142, 255, 0.34);
+}
+
+.cf12-draft-toggle[aria-expanded="true"] {
+  color: #dae2ff;
+  border-color: rgba(158, 142, 255, 0.46);
+  background: rgba(158, 142, 255, 0.13);
+}
+
+.cf12-draft-rows {
+  display: grid;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.cf12-draft-rows[hidden] {
+  display: none;
+}
+
+.cf12-row {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf12-row-label {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: #6c7a91;
+  white-space: nowrap;
+}
+
+.cf12-row-value {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #b9c6da;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.cf12-copy {
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #a9b6c9;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.cf12-copy:hover {
+  color: #f3f5fa;
+  border-color: rgba(158, 142, 255, 0.5);
+}
+
+.cf12-row.is-copied .cf12-copy {
+  color: #dae2ff;
+  border-color: rgba(158, 142, 255, 0.58);
+  background: rgba(158, 142, 255, 0.16);
+}
+
+/* execCommand 兜底用的一次性文本域：留在可视区外，别把页面顶出滚动条 */
+.cf12-copy-shim {
+  position: fixed;
+  top: -200vh;
+  left: -200vw;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* =====================================================================
+   v3.4.2 第二十五轮纯增量层：申请草稿改成可编辑表单，字段严格照 API_4.png（cf15-，纯追加）
+   联系方式是用户本人身份资料：一律留空由用户自己敲，只存本机 localStorage，
+   应用不收集、不上传，也不代填第三方页面 —— 条款勾选与 Subscribe 仍由本人点。
+   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
+   ===================================================================== */
+.cf14-group + .cf14-group {
+  margin-top: 9px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.cf14-group-title {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #6c7a91;
+  margin-bottom: 5px;
+}
+
+.cf14-group .cf12-row {
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+}
+
+.cf14-input {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #dfe5f0;
+  outline: none;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.cf14-input::placeholder {
+  color: #55607a;
+}
+
+.cf14-input:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.cf14-input:focus {
+  border-color: rgba(158, 142, 255, 0.55);
+  background: rgba(158, 142, 255, 0.08);
+}
+
+.cf14-wide {
+  grid-template-columns: 58px minmax(0, 1fr) auto !important;
+  align-items: start;
+}
+
+.cf14-area {
+  resize: none;
+  font-family: inherit;
+}
+
+.cf14-wide .cf12-row-label {
+  padding-top: 4px;
+}
+
+.cf14-foot {
+  margin-top: 8px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #55607a;
+}
+
+/* 草稿展开后最高就到这块，内部滚动：不然 14 个字段会把气泡顶到窗口外（实测 527px 越界） */
+.cf12-bubble .cf12-draft-rows {
+  max-height: 246px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(158, 142, 255, 0.28) transparent;
+  padding-right: 2px;
+}
+
+.cf12-bubble .cf12-draft-rows::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cf12-bubble .cf12-draft-rows::-webkit-scrollbar-thumb {
+  background: rgba(158, 142, 255, 0.24);
+  border-radius: 999px;
+}
+
+/* =====================================================================
+   v3.4.3 第二十五轮纯增量层：every.film 来源署名（cf16-，纯追加）
+   该站《API 使用条款》要求"以与展示载体相称的方式注明数据来源并附回链"，
+   所以在资料卡里放一行可见署名 + 可点开的回链。数据许可 CC-BY-SA 4.0。
+   ===================================================================== */
+.cf16-sheet-credit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #6c7a91;
+}
+
+.cf16-sheet-credit[hidden] {
+  display: none;
+}
+
+.cf16-credit-link {
+  font: inherit;
+  padding: 1px 7px;
+  border: 1px solid rgba(158, 142, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(158, 142, 255, 0.1);
+  color: #c9beff;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.cf16-credit-link:hover {
+  color: #fff;
+  border-color: rgba(158, 142, 255, 0.6);
+  background: rgba(158, 142, 255, 0.18);
+}
+
+/* =====================================================================
+   v3.4.3 第二十六轮纯增量层：兜底片单直接复用基线卡片结构（cf17-，纯追加）
+   .movie-rail 是 grid-auto-flow:column / grid-auto-columns:178px 的网格，
+   上一版把整条豆瓣片单塞进一个 .cf8-rail 包装 div 里 = 只占一个网格列，
+   于是"海报全挤在左边"。现在卡片直接是 .movie-card 网格子项，尺寸自动一致；
+   这里只补两件事：占位文字让位给真海报、兜底图片铺满 poster-frame。
+   ===================================================================== */
+.poster-frame img.cf8-poster-loaded {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.poster-frame:has(img) .cf8-ph {
+  display: none;
+}
+
+/* 兜底卡片与首页卡片同尺寸后，hover 由基线 .movie-card 负责，不再叠一层位移 */
+.movie-card[data-cf8-douban]:hover .cf8-poster-loaded {
+  transform: none;
+}
+
+/* =====================================================================
+   v3.4.3 第二十七轮纯增量层：分类片库的滚动容器下沉（cf18-，纯追加）
+   第二十三轮给 .cf3-page 常驻了 will-change: transform（cf3-warm，为了切页不掉帧），
+   副作用是这一页成了 position:fixed 后代的包含块 —— "热度"与"回到顶部"两枚固定按钮
+   被算进滚动内容里，滚一下就跟着往上跑。
+   这里把滚动从 .cf3-page 挪到内层 .cf3-scroll：页面本身不滚动，覆盖层的包含块就等于页面框，
+   位置恒定；切页时页面整体位移，按钮跟着页面一起进、一起出，观感也更合理。
+   摘除办法：删掉这一段 + src/library-page.js 里的 .cf3-scroll 一层，即回到上一版。
+   ===================================================================== */
+.cf3-page.cf3-library {
+  overflow: hidden;
+  padding: 0;
+}
+
+.cf3-library .cf3-scroll {
+  position: absolute;
+  inset: 0;
+  padding: 20px 26px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--accent-rgb), 0.24) transparent;
+}
+
+.cf3-library .cf3-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.cf3-library .cf3-scroll::-webkit-scrollbar-thumb {
+  background: rgba(var(--accent-rgb), 0.2);
+  border-radius: 999px;
+}
+
+/* =====================================================================
+   v3.4.3 第三十轮纯增量层：搜索框只留一个叉号（cf19-，纯追加）
+   #globalSearch 是 type="search"，Chromium 会在输入框右端画一个原生
+   ::-webkit-search-cancel-button；基线自己又有一个 #clearSearchBtn（×），
+   于是输入内容后并排出现两个叉号（真包截图实测：原生那个在 x≈846、基线那个在 x=864）。
+   原生叉号活在 UA shadow DOM 里，querySelectorAll 看不见、JS 也删不掉，只能用 CSS 关掉。
+   基线 index.html / renderer.js 一字未动，保留的正是基线那颗带样式、带 title 的叉号。
+   摘除办法：删掉下面这一段即回到上一版。
+   ===================================================================== */
+#globalSearch::-webkit-search-cancel-button,
+#globalSearch::-webkit-search-decoration,
+#globalSearch::-webkit-search-results-button,
+#globalSearch::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+}
+
+/* =====================================================================
+   v3.4.3 第三十一轮纯增量层（cf20- / cf21-，纯追加）
+   cf20：TMDB 申请草稿的"联系方式"整组去掉复制按钮后，行网格从三列收成两列
+         （否则第三列 auto 会留下一条 8px 空隙）。开发者计划那一组照旧带复制。
+   cf21：无凭证豆瓣摘要卡下面那一条可播线路（应用内置的如意资源）。
+         刻意不声明任何 app-region：拖拽区仍归基线标题栏。
+   摘除办法：删掉这两段 + src/douban-fallback.js 里 cf21- 相关函数 +
+             main.cjs 末尾的 douban:playSource 段 + preload 末尾那一个 expose，即回到上一版。
+   ===================================================================== */
+.cf12-row.cf20-nocopy {
+  grid-template-columns: 50px minmax(0, 1fr);
+}
+
+.cf21-play {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 2px;
+  padding: 12px 13px 13px;
+  border-radius: 16px;
+  border: 1px solid rgba(127, 215, 198, 0.22);
+  background:
+    linear-gradient(150deg, rgba(127, 215, 198, 0.1), rgba(216, 184, 116, 0.06)),
+    rgba(255, 255, 255, 0.03);
+  animation: cf21In 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cf21-play[hidden] {
+  display: none;
+}
+
+@keyframes cf21In {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cf21-play-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: rgba(233, 236, 255, 0.58);
+}
+
+.cf21-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #c8ffdc;
+  background: rgba(46, 196, 113, 0.14);
+  border: 1px solid rgba(46, 196, 113, 0.28);
+}
+
+.cf21-status {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: rgba(233, 236, 255, 0.55);
+}
+
+.cf21-status[hidden] {
+  display: none;
+}
+
+.cf21-play-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf21-line {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.cf21-line-name {
+  padding-top: 7px;
+  font-size: 11px;
+  color: rgba(233, 236, 255, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf21-line-eps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cf21-ep {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef0ff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 160ms cubic-bezier(0.34, 1.2, 0.5, 1),
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.cf21-ep:hover {
+  border-color: rgba(127, 215, 198, 0.6);
+  background: rgba(127, 215, 198, 0.14);
+  transform: translateY(-1px);
+}
+
+.cf21-ep:active {
+  transform: scale(0.97);
+}
+
+.cf21-more {
+  align-self: center;
+  font-size: 11px;
+  color: rgba(233, 236, 255, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf21-play {
+    animation: none !important;
+  }
+
+  .cf21-ep {
+    transition-duration: 1ms !important;
+  }
+}
+
+/* =====================================================================
+   v3.4.3 第三十三轮纯增量层：设置页两栏被外部源撑坏的修复（cf22-，纯追加）
+   两个真问题（第三十二轮那版 cf5 布局遗留）：
+   ① 两栏时左栏 .settings-scroll 是 display:grid，网格行默认会被"拉满整行高度"，
+      而第 3 行的高度由右栏（片源面板）决定 —— 导入多条源后右栏变高，左栏的
+      代理输入框 / 两个下拉就被纵向拉长到 72px 以上，观感就是"基础设置被撑大"。
+      修法：align-content:start，让左栏各行保持自然高度、整体靠上。
+   ② ≤900px 自动变单栏时，两段各自还留着 max-height:calc(100vh - 230px) 并且
+      .settings-card 是 overflow:hidden —— 两段叠起来 900px+ 而卡片只有 560px，
+      底部（最后几行源 / 底部按钮）直接被裁掉。修法：单栏时两段都放开高度、
+      改由卡片自己滚动，关闭按钮 sticky 住别滚跑。
+   只覆盖 cf5 那套布局，基线规则一条未改；摘掉本段即回到上一版。
+   ===================================================================== */
+.settings-card:has(.cf5-sources) > .settings-scroll {
+  align-content: start;
+}
+
+@media (max-width: 900px) {
+  .settings-card:has(.cf5-sources) {
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(var(--accent-rgb), 0.24) transparent;
+  }
+
+  .settings-card:has(.cf5-sources)::-webkit-scrollbar {
+    width: 9px;
+  }
+
+  .settings-card:has(.cf5-sources)::-webkit-scrollbar-thumb {
+    background: rgba(var(--accent-rgb), 0.2);
+    border-radius: 999px;
+  }
+
+  .settings-card:has(.cf5-sources) > .settings-scroll,
+  .settings-card:has(.cf5-sources) > .cf5-sources {
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .settings-card:has(.cf5-sources) > .settings-scroll {
+    padding-right: 0;
+  }
+
+  .settings-card:has(.cf5-sources) > #settingsCloseBtn {
+    position: sticky;
+    top: 12px;
+    justify-self: end;
+    z-index: 3;
+  }
+}
+
+/* =====================================================================
+   v3.4.4 第三十四轮纯增量层：CF 图标更新检查气泡（cf23-，纯追加）
+   CF 图标在基线的 .brand.drag-region 里，要能点就必须给自己声明 no-drag ——
+   只抠出这 42×42 一小块，标题栏其余部分仍然可拖（基线 .titlebar / .brand 的
+   drag 规则一条未改）。气泡挂在 #app 上、不声明任何 app-region。
+   摘除办法：删掉本段 + src/update-bubble.js + incremental-pages.js 两行挂钩即回退。
+   ===================================================================== */
+.brand-mark {
+  position: relative;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    transform 160ms cubic-bezier(0.34, 1.2, 0.5, 1),
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.brand-mark:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 40px rgba(216, 184, 116, 0.26);
+}
+
+.brand-mark:active {
+  transform: scale(0.96);
+}
+
+.brand-mark:focus-visible {
+  outline: 2px solid rgba(127, 215, 198, 0.7);
+  outline-offset: 3px;
+}
+
+/* 有新版时图标右上角一颗小圆点 */
+.brand-mark.cf23-has-update::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd479, #ff9f6b);
+  box-shadow: 0 0 0 2px rgba(10, 12, 20, 0.9), 0 0 10px rgba(255, 190, 120, 0.7);
+  animation: cf23Dot 1.8s ease-in-out infinite;
+}
+
+@keyframes cf23Dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.82); opacity: 0.72; }
+}
+
+.cf23-bubble {
+  position: fixed;
+  z-index: 33;
+  width: min(240px, calc(100vw - 28px));
+  padding: 11px 13px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 17px;
+  background:
+    linear-gradient(160deg, rgba(26, 30, 50, 0.97), rgba(12, 14, 24, 0.98));
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 22px 52px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: #eef0ff;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.86) translateY(-8px);
+  transform-origin: var(--cf23-caret-x, 40px) -8px;
+  pointer-events: none;
+  /* 进出场与 cf12 鸿蒙气泡完全同一套：进场 reveal，退场按 cf3-dur-close 淡出 + visibility 延时 */
+  transition:
+    opacity var(--cf3-dur-close) var(--cf3-ease-exit),
+    transform var(--cf3-dur-open) cubic-bezier(0.34, 1.4, 0.5, 1),
+    visibility 0s linear var(--cf3-dur-close);
+}
+
+.cf23-bubble.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity var(--cf3-dur-open) var(--cf3-ease-reveal),
+    transform var(--cf3-dur-open) cubic-bezier(0.34, 1.4, 0.5, 1),
+    visibility 0s linear 0s;
+}
+
+.cf23-bubble::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: calc(var(--cf23-caret-x, 40px) - 6px);
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: rgba(26, 30, 50, 0.98);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  transform: rotate(45deg);
+}
+
+.cf23-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.cf23-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: #c8ffdc;
+  background: rgba(46, 196, 113, 0.14);
+  border: 1px solid rgba(46, 196, 113, 0.28);
+}
+
+.cf23-versions {
+  font-size: 11px;
+  color: rgba(233, 236, 255, 0.5);
+  letter-spacing: 0.04em;
+}
+
+.cf23-title {
+  margin: 0 0 3px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.cf23-meta {
+  margin: 0;
+  min-height: 15px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(233, 236, 255, 0.58);
+  overflow-wrap: anywhere;
+}
+
+.cf23-progress {
+  margin-top: 8px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.cf23-progress[hidden] {
+  display: none;
+}
+
+.cf23-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(127, 215, 198, 0.9), rgba(216, 184, 116, 0.9));
+  transition: width 200ms ease;
+}
+
+.cf23-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cf23-actions .primary-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: 29px;
+  padding: 0 13px;
+  border-radius: 10px;
+  font-size: 11.5px;
+}
+
+/* "稍后"只留文字：不画边框、不铺底，和气泡里的主按钮不再抢视觉。
+   注意基线 .ghost-button 是 display:grid + width/height:42px 的方形按钮，必须显式改回 auto。 */
+.cf23-actions .cf23-later {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: rgba(233, 236, 255, 0.52);
+  font-size: 11.5px;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+
+.cf23-actions .cf23-later:hover {
+  color: #eef0ff;
+  background: none;
+  border: 0;
+}
+
+.cf23-actions .cf23-action[hidden],
+.cf23-actions .cf23-later[hidden] {
+  display: none;
+}
+
+.cf23-actions .cf23-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-mark,
+  .cf23-bubble,
+  .cf23-progress > i {
+    transition-duration: 1ms !important;
+  }
+
+  .brand-mark.cf23-has-update::after,
+  .cf23-bubble.is-open {
+    animation: none !important;
+  }
+}

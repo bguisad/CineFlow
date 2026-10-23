@@ -215,7 +215,10 @@ function createMetaServer(deps) {
         callback(String(bodyBuffer.length), 'content-length');
       }
     };
-    const text = () => bodyBuffer.toString('utf8');
+    // 必须是 async：真 Response.text() 返回 Promise，基线里有多处 `response.text().catch(...)`
+    // （TMDB 凭证校验、代理连通性检测、首帧预热），返回同步字符串会让它们直接抛
+    // `response.text(...).catch is not a function` —— 第三十二轮用户报的"剪贴板校验未通过"就是这个。
+    const text = async () => bodyBuffer.toString('utf8');
     return {
       ok: status >= 200 && status < 300,
       status,

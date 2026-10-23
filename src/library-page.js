@@ -2,9 +2,14 @@
 // 卡片复用基线 .movie-card 结构与 data-content-key 约定，点击仍由基线事件委托打开介绍页。
 // 排序 / 年份通过悬浮按钮展开，不改基线任何函数，只调用既有 tmdb:discover IPC。
 // 第九轮：加载更多照搬首页那套（railState 的 page/loading/hasMore + 去重合并 + 一页不足 18 条即到底 +
-// 距底 420px 触发），滚动容器就是这一页自己，滚轮往下滑会一直续拉，不再有 8 页上限。
+// 距底 420px 触发），滚轮往下滑会一直续拉，不再有 8 页上限。
 // 第十轮：首页"电影/节目风格入口"已从界面去掉，标签真源改成 state.genres（TMDB 电影+节目类型全集），
 // 顺序照 classification.png 的"类型"行排；标签只留分类文字；2000 年之前统一归进"2000~"一个标签。
+// 第十八轮：无 TMDB 凭证（或 TMDB 整页失败）时改用豆瓣热门片单兜底，卡片带 data-cf8-douban，
+// 点击由 douban-fallback 接管弹出豆瓣资料卡（播放仍需 TMDB 凭证，不给假按钮）。
+// 第二十七轮：滚动改到内层 .cf3-scroll，"热度 / 回到顶部"两枚固定按钮留在不滚动的页面上，
+// 因为 cf3-warm 的常驻 will-change 会让滚动的 .cf3-page 变成 fixed 后代的包含块（按钮跟着滚走）。
+import { fetchDoubanMovies } from './douban-fallback.js';
 
 const SORTS = [
   { id: 'popularity', label: '热度', movie: 'popularity.desc', tv: 'popularity.desc' },
@@ -54,7 +59,10 @@ function collectGenres(state) {
 }
 
 function posterOf(path) {
-  return path ? `${IMAGE_BASE}/${POSTER_SIZE}${path}` : '';
+  if (!path) return '';
+  const value = String(path);
+  if (/^(https?:|data:)/i.test(value)) return value; // 豆瓣兜底海报是绝对地址
+  return `${IMAGE_BASE}/${POSTER_SIZE}${path}`;
 }
 
 function scoreOf(movie) {
@@ -64,10 +72,12 @@ function scoreOf(movie) {
 function rememberMovie(state, movie) {
   const mediaType = movie.mediaType === 'tv' ? 'tv' : 'movie';
   const key = `${mediaType}:${movie.id}`;
-  try {
-    if (state?.cardMovies?.set) state.cardMovies.set(key, movie);
-  } catch (error) {
-    /* Map 不可用时卡片点击只是打不开详情，页面本身不受影响 */
+  if (!movie.cf8Douban) {
+    try {
+      if (state?.cardMovies?.set) state.cardMovies.set(key, movie);
+    } catch (error) {
+      /* Map 不可用时卡片点击只是打不开详情，页面本身不受影响 */
+    }
   }
   return key;
 }
@@ -80,6 +90,16 @@ function buildCard(movie, state, escapeHtml) {
   card.dataset.movieId = String(movie.id);
   card.dataset.mediaType = movie.mediaType === 'tv' ? 'tv' : 'movie';
   card.dataset.contentKey = key;
+  if (movie.cf8Douban) {
+    card.dataset.cf8Douban = '1';
+    card.__cf8Item = {
+      id: movie.cf8Id || movie.id,
+      title: movie.title,
+      mediaType: movie.mediaType === 'tv' ? 'tv' : 'movie',
+      cover: movie.cf8Cover || movie.posterPath || '',
+      rating: movie.cf8Rating || ''
+    };
+  }
   const poster = posterOf(movie.posterPath);
   const year = String(movie.releaseDate || '').slice(0, 4);
   card.innerHTML = `
@@ -100,7 +120,7 @@ function yearQuery(year) {
   return {};
 }
 
-async function fetchPage(api, { genre, media, sort, year, page }) {
+async function fetchTmdbPage(api, { genre, media, sort, year, page }) {
   const movieSort = sort.movie;
   const tvSort = sort.tv;
   const yearParams = yearQuery(year);
@@ -132,6 +152,17 @@ async function fetchPage(api, { genre, media, sort, year, page }) {
   return api.discoverMovies({ genreId: genre ? genre.id : undefined, sortBy: movieSort, ...yearParams, page });
 }
 
+// 第十八轮：TMDB 整页失败（含无凭证）时改用豆瓣热门片单；豆瓣也拿不到才把原错误抛回去
+async function fetchPage(api, query) {
+  try {
+    return await fetchTmdbPage(api, query);
+  } catch (error) {
+    const fallback = await fetchDoubanMovies(query).catch(() => []);
+    if (fallback.length) return fallback;
+    throw error;
+  }
+}
+
 export function createLibraryPage({ api, state, escapeHtml = (value) => String(value ?? '') } = {}) {
   const view = document.createElement('div');
   view.className = 'cf3-page cf3-library';
@@ -144,19 +175,25 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
     { year: PRE_2000, label: '2000~' },
   ];
 
+  // 第二十七轮：滚动容器换成内层 .cf3-scroll，页面自身不再滚动。
+  // 原因：cf3-warm 给 .cf3-page 常驻了 will-change:transform，这会让它成为 position:fixed 后代的包含块，
+  // 于是"热度"和"回到顶部"这两枚固定按钮被算进了滚动内容里 —— 一滚就跑上去了。
+  // 现在覆盖层是 .cf3-page 的直接子节点，包含块 = 不滚动的页面框，位置恒定；滚动条样式跟着搬到内层。
   view.innerHTML = `
-    <header class="cf3-head">
-      <p class="eyebrow">LIBRARY</p>
-      <h2 class="cf3-title">分类片库</h2>
-      <div class="cf3-media cf3-no-drag" role="group" aria-label="媒体类型"></div>
-    </header>
-    <div class="cf3-filter">
-      <span class="cf3-filter-label">类型</span>
-      <div class="cf3-styles cf3-no-drag" role="group" aria-label="风格分类"></div>
-    </div>
-    <div class="cf3-grid" aria-live="polite"></div>
-    <div class="cf3-foot">
-      <button class="rail-more-button cf3-more" type="button" hidden>加载更多</button>
+    <div class="cf3-scroll">
+      <header class="cf3-head">
+        <p class="eyebrow">LIBRARY</p>
+        <h2 class="cf3-title">分类片库</h2>
+        <div class="cf3-media cf3-no-drag" role="group" aria-label="媒体类型"></div>
+      </header>
+      <div class="cf3-filter">
+        <span class="cf3-filter-label">类型</span>
+        <div class="cf3-styles cf3-no-drag" role="group" aria-label="风格分类"></div>
+      </div>
+      <div class="cf3-grid" aria-live="polite"></div>
+      <div class="cf3-foot">
+        <button class="rail-more-button cf3-more" type="button" hidden>加载更多</button>
+      </div>
     </div>
     <button class="cf3-fab cf3-no-drag" type="button" title="排序与年份" aria-label="排序与年份" aria-expanded="false">
       <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 5h9M3 10h6M3 15h4" /><path d="M14 6v9m0 0 2.4-2.6M14 15l-2.4-2.6" /></svg>
@@ -173,6 +210,7 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
     </div>
   `;
 
+  const scroller = view.querySelector('.cf3-scroll');
   const mediaRow = view.querySelector('.cf3-media');
   const styleRow = view.querySelector('.cf3-styles');
   const grid = view.querySelector('.cf3-grid');
@@ -191,6 +229,7 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
   let token = 0;
   let loading = false;
   let hasMore = true;
+  let loadedEpoch = ''; // 这一页当前是用哪个数据源渲染的（无凭证=豆瓣 / 有凭证=TMDB）
 
   function chips(row, entries, isActive, onPick, makeChip) {
     row.innerHTML = '';
@@ -255,7 +294,14 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
   renderControls();
 
   function cacheKey() {
-    return `${query.genre?.id || 0}|${query.media}|${query.sort.id}|${query.year || 0}|${page}`;
+    return `${sourceEpoch()}|${query.genre?.id || 0}|${query.media}|${query.sort.id}|${query.year || 0}|${page}`;
+  }
+
+  // 数据源身份：无凭证时这一页是豆瓣片单，配好凭证后是 TMDB。凭证一变，缓存与已渲染的卡片都得作废，
+  // 否则"保存并刷新"只刷新了首页，切到这一页还是旧内容（第二十六轮修的就是这个）。
+  function sourceEpoch() {
+    const credential = state?.credential;
+    return `${credential?.configured ? '1' : '0'}:${credential?.type || ''}`;
   }
 
   // 与首页 loadMoreRail 同一套：合并时按 mediaType:id 去重，只把新卡片追加进网格
@@ -299,7 +345,7 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
     if (reset) {
       page = 1;
       hasMore = true;
-      view.scrollTop = 0;
+      scroller.scrollTop = 0;
       if (!cache.has(cacheKey())) grid.innerHTML = skeletons();
     }
     const current = ++token;
@@ -343,30 +389,30 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
 
   function maybeAutoLoadMore() {
     if (loading || !hasMore) return;
-    const remaining = view.scrollHeight - view.scrollTop - view.clientHeight;
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     if (remaining < LOAD_MORE_THRESHOLD_PX) loadMore();
   }
 
   // 一键回到顶部：离开顶部一屏的三分之一才浮出，回到顶部就收回去
   const TO_TOP_THRESHOLD_PX = 320;
   function syncToTop() {
-    const show = view.scrollTop > TO_TOP_THRESHOLD_PX;
+    const show = scroller.scrollTop > TO_TOP_THRESHOLD_PX;
     toTop.classList.toggle('is-visible', show);
     view.classList.toggle('is-scrolled', show);
   }
 
   toTop.addEventListener('click', (event) => {
     event.stopPropagation();
-    if (view.scrollTo) view.scrollTo({ top: 0, behavior: 'smooth' });
-    else view.scrollTop = 0;
+    if (scroller.scrollTo) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    else scroller.scrollTop = 0;
   });
 
   // 首页就是 scroll + wheel 双绑定：软件渲染下滚轮未必触发 scroll 事件，补一次延后检查
-  view.addEventListener('scroll', () => {
+  scroller.addEventListener('scroll', () => {
     maybeAutoLoadMore();
     syncToTop();
   }, { passive: true });
-  view.addEventListener('wheel', () => window.setTimeout(() => {
+  scroller.addEventListener('wheel', () => window.setTimeout(() => {
     maybeAutoLoadMore();
     syncToTop();
   }, 80), { passive: true });
@@ -382,9 +428,24 @@ export function createLibraryPage({ api, state, escapeHtml = (value) => String(v
 
   return {
     el: view,
-    activate() {
+    async activate() {
       syncGenres();
-      if (!grid.childElementCount) load(true);
+      // 凭证可能刚被向导或"保存并刷新"改掉：以主进程为准核一次再决定要不要重拉
+      const fresh = await api?.getCredentialState?.().catch(() => null);
+      if (fresh && state) state.credential = fresh;
+      const epoch = sourceEpoch();
+      if (!grid.childElementCount) {
+        loadedEpoch = epoch;
+        load(true);
+        return;
+      }
+      if (loadedEpoch === epoch) return;
+      // 数据源换了（豆瓣 ↔ TMDB）：缓存与已渲染卡片全部作废，整页重拉
+      loadedEpoch = epoch;
+      cache.clear();
+      genres = collectGenres(state);
+      syncGenres();
+      load(true);
     },
     // 切页时收起浮层，避免快照里出现半个浮层、也避免回来时还挡着
     settle() {

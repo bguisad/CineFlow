@@ -4323,6 +4323,10 @@ initIncrementalCast({ api, state, escapeHtml });
 // v3.4.0 纯增量：分类片库 / 播放历史 / 三页切换，异常自动跳过、基线首页不进 3D
 initIncrementalPages({ api, state, escapeHtml });
 
+// v3.4.3 第三十一轮纯增量：只是把已有的播放器入口多开一个门（原有 2544 / 3129 两处调用一行未改），
+// 供"无 TMDB 凭证"时豆瓣摘要卡下面那条线路使用 —— 播放器、resolve、代理、广告过滤全是基线那一套。
+window.__cineflowOpenResourcePlayer = (payload) => openResourcePlayer(payload);
+
 
 
 

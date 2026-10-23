@@ -2783,7 +2783,7 @@ ipcMain.handle('resources:testSource', async (_event, payload = {}) => {
       cache: 'no-store',
       headers: {
         accept: 'application/json, text/plain, */*',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CineFlow/3.4.0'
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CineFlow/3.4.4'
       }
     });
     const elapsedMs = Date.now() - startedAt;
@@ -2802,5 +2802,606 @@ ipcMain.handle('resources:testSource', async (_event, payload = {}) => {
     };
   } finally {
     clearTimeout(timeout);
+  }
+});
+
+/* ================= v3.4.1 TMDB 应用内凭证向导（纯增量） =================
+   只做 TMDB 官方的 v4 授权流：申请 request token → 用户在浏览器里点批准 →
+   换 Read Access Token → 走既有 app:saveCredential 同一份写入链路存进本机。
+   不注册账号、不过 CAPTCHA、不碰开发者表格审批。
+   没有 v3 Key 时直接回 NEED_API_KEY，由渲染层改走"打开申请页 + 剪贴板自动识别"引导。
+*/
+const { createTmdbAuthFlow, classifyCredential: classifyTmdbCredential } = require('./tmdb-auth.cjs');
+const { clipboard: tmdbClipboard } = require('electron');
+
+async function tmdbAuthFetch(url, options = {}) {
+  await applyProxySetting().catch(() => {});
+  const target = new URL(url);
+  if (options.apiKey) target.searchParams.set('api_key', String(options.apiKey));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TMDB_TIMEOUT_MS);
+  const headers = { accept: 'application/json' };
+  let body;
+  if (options.body) {
+    headers['content-type'] = 'application/json';
+    body = JSON.stringify(options.body);
+  }
+  try {
+    const response = await session.defaultSession.fetch(target.toString(), {
+      method: options.method || 'GET',
+      headers,
+      body,
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const text = await response.text().catch(() => '');
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: data?.status_message || data?.status_code || `HTTP ${response.status}` };
+    }
+    return { ok: true, status: response.status, data };
+  } catch (error) {
+    const aborted = error?.name === 'AbortError' || controller.signal.aborted;
+    return { ok: false, status: 0, error: aborted ? `超时 ${Math.round(TMDB_TIMEOUT_MS / 1000)}s` : (error?.message || '请求失败') };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const tmdbAuth = createTmdbAuthFlow({
+  fetchJson: tmdbAuthFetch,
+  openExternal: (url) => (/^https?:\/\//i.test(String(url || '')) ? shell.openExternal(String(url)) : Promise.reject(new Error('非法地址'))),
+  readCredential: () => getCredential(),
+  saveCredential: (value) => {
+    const normalized = normalizeCredential(value);
+    if (!normalized) throw new Error('TMDB 返回的凭证格式不正确');
+    const settings = readSettings();
+    settings.tmdbCredential = normalized.value;
+    writeSettings(settings);
+    clearTmdbCaches();
+    return publicCredentialState();
+  },
+});
+
+ipcMain.handle('tmdbAuth:start', async () => tmdbAuth.start().then((result) => ({ ...result })));
+ipcMain.handle('tmdbAuth:status', () => tmdbAuth.snapshot());
+ipcMain.handle('tmdbAuth:cancel', () => tmdbAuth.cancel());
+
+// 引导路径用：用户在 TMDB 页面复制密钥后回到应用，渲染层轮询这里，识别到就自动填入保存。
+// 只在向导处于"等粘贴"阶段被调用，平时不读剪贴板。
+ipcMain.handle('tmdbAuth:clipboard', () => {
+  let text = '';
+  try { text = tmdbClipboard.readText() || ''; } catch { return { found: false }; }
+  const hit = classifyTmdbCredential(text);
+  if (!hit) return { found: false };
+  const normalized = normalizeCredential(hit.value);
+  const settings = readSettings();
+  settings.tmdbCredential = normalized.value;
+  writeSettings(settings);
+  clearTmdbCaches();
+  return { found: true, type: normalized.type, state: publicCredentialState() };
+});
+
+/* ---- v3.4.2 增补：剪贴板凭证"先校验再落盘"（纯增量，上面那个 handler 原样保留） ----
+   原来的 tmdbAuth:clipboard 只做格式匹配：32 位十六进制就算命中，于是剪贴板里任意一段
+   MD5/序列号都会被当成 API Key 写进 settings.json，徽标显示"API Key"但首页照样全空。
+   这里多走一步 GET /3/configuration 真校验：401 直接回报"无效/已吊销"，不落盘。
+   同一段粘贴内容只校验一次，避免引导期 800ms 一轮把 TMDB 打成限流。 */
+let tmdbGrabReject = { value: '', error: '' };
+
+async function tmdbVerifyCredential(hit) {
+  if (!hit?.value) return { ok: false, error: '没有可校验的凭证' };
+  await applyProxySetting().catch(() => {});
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TMDB_TIMEOUT_MS);
+  try {
+    const target = new URL('https://api.themoviedb.org/3/configuration');
+    const headers = { accept: 'application/json' };
+    if (hit.type === 'apiKey') target.searchParams.set('api_key', hit.value);
+    else headers.authorization = `Bearer ${hit.value}`;
+    const response = await session.defaultSession.fetch(target.toString(), {
+      headers,
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const text = await response.text().catch(() => '');
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!response.ok) {
+      const fallback = response.status === 401
+        ? 'TMDB 判定这把密钥无效（已吊销，或复制时缺了字符）'
+        : (data?.status_message || `HTTP ${response.status}`);
+      return { ok: false, status: response.status, error: fallback };
+    }
+    return { ok: true, imagesBaseUrl: data?.images?.secure_base_url || '' };
+  } catch (error) {
+    const aborted = error?.name === 'AbortError' || controller.signal.aborted;
+    return { ok: false, error: aborted ? `校验超时 ${Math.round(TMDB_TIMEOUT_MS / 1000)}s` : (error?.message || '校验请求失败') };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+ipcMain.handle('tmdbAuth:grab', async () => {
+  let text = '';
+  try { text = tmdbClipboard.readText() || ''; } catch { return { found: false }; }
+  const hit = classifyTmdbCredential(text);
+  if (!hit) return { found: false };
+  if (tmdbGrabReject.value === hit.value) {
+    return { found: true, type: hit.type, valid: false, error: tmdbGrabReject.error, cached: true };
+  }
+  const verdict = await tmdbVerifyCredential(hit);
+  if (!verdict.ok) {
+    tmdbGrabReject = { value: hit.value, error: verdict.error || '校验未通过' };
+    return { found: true, type: hit.type, valid: false, error: verdict.error || '校验未通过' };
+  }
+  tmdbGrabReject = { value: '', error: '' };
+  const normalized = normalizeCredential(hit.value);
+  const settings = readSettings();
+  settings.tmdbCredential = normalized.value;
+  writeSettings(settings);
+  clearTmdbCaches();
+  return { found: true, type: normalized.type, valid: true, state: publicCredentialState() };
+});
+
+/* ================= v3.4.2 播放源强过滤 + 轮询提速（纯增量） =================
+   两件事都只在基线返回值外面套一层，不改基线的解析、打分与轮询实现：
+   ① 提速：基线一批最多 4 个源（findMovieResources 把 limit 夹在 1..4），mode=full 有 8 个源
+      就要跑 3 批，渲染端每批之间还 setTimeout 90ms。这里一次把全部源并行拉完并直接标 done，
+      渲染端一次调用就拿到齐的结果；同一部片 60s 内再开介绍页直接命中合并缓存。
+   ② 过滤：标题强一致是主判据（实测《寄生虫》混进「寄生虫保姆」、《不择手段》混进
+      「假名媛她不择手段」都是标题不一致），类型与年份只作辅助；判据不足一律放行。
+*/
+const { filterResources } = require('./resource-type-filter.cjs');
+
+const RESOURCE_FAST_TTL_MS = 60 * 1000;
+const RESOURCE_FAST_MAX = 24;
+const RESOURCE_BATCH = 4;
+const resourceFastCache = new Map();
+
+function resourceFastKey(payload = {}) {
+  const revision = Number(readSettings().resourceConfigRevision || 0);
+  return [
+    revision,
+    String(payload.mediaType || 'movie'),
+    String(payload.title || '').trim(),
+    String(payload.originalTitle || '').trim(),
+    String(payload.year || payload.releaseDate || '').slice(0, 4)
+  ].join('|');
+}
+
+// 一次调用把全部源并行拉完：第一批拿 total，剩下的批次并发补齐。任何一批抛错都只是少几个源。
+async function gatherAllSources(payload) {
+  const first = await findMovieResources(payload, { cursor: 0, limit: RESOURCE_BATCH });
+  if (!first) return null;
+  const total = Number(first.total || 0);
+  const resources = Array.isArray(first.resources) ? first.resources.slice() : [];
+  const rest = [];
+  for (let cursor = RESOURCE_BATCH; cursor < total; cursor += RESOURCE_BATCH) {
+    rest.push(findMovieResources(payload, { cursor, limit: RESOURCE_BATCH }));
+  }
+  const parts = await Promise.all(rest.map((promise) => promise.catch(() => null)));
+  for (const part of parts) {
+    if (Array.isArray(part?.resources)) resources.push(...part.resources);
+  }
+  return { first, total, resources };
+}
+
+ipcMain.handle('resources:findMovieFiltered', async (_event, payload = {}, options = {}) => {
+  const mediaType = String(payload?.mediaType || 'movie').toLowerCase() === 'tv' ? 'tv' : 'movie';
+  const key = resourceFastKey(payload);
+  const cached = resourceFastCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.result, prewarmed: true };
+
+  let gathered = null;
+  try {
+    gathered = await gatherAllSources(payload);
+  } catch {
+    gathered = null;
+  }
+  // 并行链路任何意外都退回基线单次调用，行为与上一版一致
+  if (!gathered) {
+    const fallback = await findMovieResources(payload, options);
+    const fb = filterResources(fallback.resources, payload);
+    return { ...fallback, resources: fb.resources, filteredOut: fb.dropped.length, dropped: fb.dropped };
+  }
+
+  const { resources, dropped } = filterResources(gathered.resources, payload);
+  if (dropped.length) {
+    console.log(`[资源过滤] ${mediaType} · ${String(payload.title || '').trim()} · 丢弃 ${dropped.length} 条：${dropped.map((d) => `${d.sourceName}/${d.title}(${d.reason})`).join(' , ').slice(0, 300)}`);
+  }
+  const result = {
+    ...gathered.first,
+    resources,
+    checked: gathered.total || gathered.first.checked,
+    nextCursor: gathered.total || 0,
+    done: true,
+    batches: 1,
+    filteredOut: dropped.length,
+    dropped
+  };
+  if (result.resources.length) {
+    resourceFastCache.set(key, { expiresAt: Date.now() + RESOURCE_FAST_TTL_MS, result });
+    if (resourceFastCache.size > RESOURCE_FAST_MAX) {
+      const now = Date.now();
+      for (const [cacheKey, entry] of resourceFastCache) {
+        if (entry.expiresAt <= now) resourceFastCache.delete(cacheKey);
+      }
+      while (resourceFastCache.size > RESOURCE_FAST_MAX) {
+        resourceFastCache.delete(resourceFastCache.keys().next().value);
+      }
+    }
+  }
+  return result;
+});
+
+/* ================= v3.4.2 播放首帧深度预热（纯增量，第二轮加强） =================
+   上一版只预跑了 resolve + 一发 Range: bytes=0-1，实测三段链里"清单 + 首分片"仍要 1~2.5s。
+   关键发现：基线 proxyMediaRequest 调 session.defaultSession.fetch 时**没有传 cache 参数**
+   （main.cjs:1798），也就是走 Chromium 默认缓存模式 —— 只要我用与它一致的头、同样的默认缓存
+   模式先把清单和首分片取回来，播放器再请求同一条 URL 就有机会直接命中会话 HTTP 缓存。
+   所以这一版把预热做成"把起播要用的字节真的先取回来"：
+     ① resolveMediaUrl —— 填基线 mediaResolveCache，share 线路省掉整页 HTML 解析
+     ② 清单本体（几十 KB，必取，且必进缓存）
+     ③ #EXT-X-KEY 的 URI —— 密钥不预热就是一次串行往返
+     ④ 前 2 个分片 —— 只在 content-length 已知且 ≤4MB 时取，避免误拉大文件
+     ⑤ 非 m3u8 的直链 —— 只发 Range 前 256KB，热 DNS/TLS 与边缘节点（部分响应不入缓存，
+        这一档只能省掉握手，省不掉源站 TTFB）
+   深度预热很贵，只给"最可能被点的那条"：介绍页第一条 + 鼠标悬停的那条，单次调用最多 2 条。
+   全程 best-effort：任何一步失败都只是少预热一点，绝不影响真实播放链路。
+*/
+const MEDIA_WARM_TIMEOUT_MS = 8000;
+const MEDIA_WARM_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
+const MEDIA_WARM_SEGMENTS = 2;
+const MEDIA_WARM_DEEP_MAX = 2;
+const MEDIA_PREWARM_TTL_MS = 4 * 60 * 1000;
+const mediaPrewarmSeen = new Map();
+
+// 与基线 proxyMediaRequest 完全一致的头：会话 HTTP 缓存按 URL(+Vary) 命中，头不对就白热
+function mediaWarmHeaders(sourceUrl) {
+  const headers = {
+    accept: '*/*',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CineFlow/3.2.0'
+  };
+  try {
+    headers.referer = `${new URL(sourceUrl).origin}/`;
+  } catch {
+    /* 源地址异常就不带 referer，让上游按默认处理 */
+  }
+  return headers;
+}
+
+async function mediaWarmGet(url, headers, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MEDIA_WARM_TIMEOUT_MS);
+  try {
+    const response = await session.defaultSession.fetch(url, {
+      method: options.method || 'GET',
+      headers: options.range ? { ...headers, range: options.range } : headers,
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    const length = Number(response.headers.get('content-length') || 0);
+    if (options.maxBytes && (!length || length > options.maxBytes)) {
+      try { await response.body?.cancel?.(); } catch { /* 取消失败无所谓 */ }
+      return { skipped: true, status: response.status };
+    }
+    const contentType = String(response.headers.get('content-type') || '');
+    if (options.wantText || contentType.toLowerCase().includes('mpegurl') || /\.m3u8(\?|$)/i.test(url)) {
+      const text = await response.text().catch(() => '');
+      return { text, status: response.status, finalUrl: response.url || url };
+    }
+    const buffer = await response.arrayBuffer().catch(() => null);
+    return { bytes: buffer ? buffer.byteLength : 0, status: response.status, finalUrl: response.url || url };
+  } catch (error) {
+    return { error: error?.name === 'AbortError' ? 'timeout' : String(error?.message || error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 拆 HLS 清单：密钥 URI、分片 URI、是不是主清单（变体还要再跳一层）
+function parseHlsManifest(manifest, baseUrl) {
+  const keys = [];
+  const uris = [];
+  let isMaster = false;
+  for (const rawLine of String(manifest || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^#EXT-X-STREAM-INF/i.test(line)) { isMaster = true; continue; }
+    if (/^#EXT-X-KEY/i.test(line)) {
+      const uri = /URI="([^"]+)"/.exec(line);
+      if (uri) keys.push(uri[1]);
+      continue;
+    }
+    if (line.startsWith('#')) continue;
+    uris.push(line);
+  }
+  const absolute = (value) => {
+    try {
+      return new URL(value, baseUrl).toString();
+    } catch {
+      return '';
+    }
+  };
+  return { isMaster, keys: keys.map(absolute).filter(Boolean), uris: uris.map(absolute).filter(Boolean) };
+}
+
+async function deepWarmMedia(rawUrl) {
+  const startedAt = Date.now();
+  const resolved = await resolveMediaUrl(rawUrl).catch(() => null);
+  let target = String(resolved?.url || '').trim();
+  const stats = { resolveMs: Date.now() - startedAt, kind: String(resolved?.kind || ''), manifestBytes: 0, keys: 0, segmentBytes: 0, note: '' };
+  if (!/^https?:\/\//i.test(target)) { stats.note = '无可用地址'; return stats; }
+
+  // 主清单 → 媒体清单，最多两跳
+  for (let hop = 0; hop < 2; hop += 1) {
+    const looksHls = /\.m3u8(\?|$)/i.test(target) || hop === 0;
+    if (!looksHls) break;
+    const got = await mediaWarmGet(target, mediaWarmHeaders(target), { wantText: true });
+    if (got.error) { stats.note = `清单 ${got.error}`; return stats; }
+    if (!got.text) { stats.note = '清单为空'; return stats; }
+    const parsed = parseHlsManifest(got.text, got.finalUrl || target);
+    if (parsed.isMaster) {
+      stats.manifestBytes += got.text.length;
+      target = parsed.uris[0] || '';
+      if (!target) { stats.note = '主清单无变体'; return stats; }
+      continue; // 再跳一次取真正的媒体清单
+    }
+    stats.manifestBytes += got.text.length;
+    for (const keyUrl of parsed.keys.slice(0, 1)) {
+      const warmed = await mediaWarmGet(keyUrl, mediaWarmHeaders(keyUrl), {});
+      if (!warmed.error && !warmed.skipped) stats.keys += 1;
+    }
+    for (const segmentUrl of parsed.uris.slice(0, MEDIA_WARM_SEGMENTS)) {
+      const warmed = await mediaWarmGet(segmentUrl, mediaWarmHeaders(segmentUrl), { maxBytes: MEDIA_WARM_SEGMENT_MAX_BYTES });
+      if (warmed.bytes) stats.segmentBytes += warmed.bytes;
+    }
+    stats.note = `分片 ${stats.segmentBytes ? Math.round(stats.segmentBytes / 1024) : 0}KB`;
+    return stats;
+  }
+
+  // 非 HLS 直链：只发一小段 Range，热连接与边缘节点（部分响应不进缓存，这里只省握手）
+  const got = await mediaWarmGet(target, mediaWarmHeaders(target), { range: 'bytes=0-262143' });
+  stats.note = got.error ? `直链 ${got.error}` : '直链已热连接';
+  return stats;
+}
+
+ipcMain.handle('media:prewarm', async (_event, payload = {}) => {
+  const input = Array.isArray(payload) ? { urls: payload } : (payload || {});
+  const list = Array.isArray(input.urls)
+    ? input.urls.map((url) => String(url || '').trim()).filter((url) => /^https?:\/\//i.test(url))
+    : [];
+  const now = Date.now();
+  const fresh = [];
+  let deepWanted = Math.max(0, Math.min(MEDIA_WARM_DEEP_MAX, Number(input.deepCount) || 0));
+  for (const url of list) {
+    const seen = mediaPrewarmSeen.get(url);
+    if (seen && now - seen.at < MEDIA_PREWARM_TTL_MS) {
+      // 之前只浅热过（连接/清单），这次要深度热：允许升级，别因为"见过"就整个跳过
+      if (deepWanted > 0 && !seen.deep) {
+        mediaPrewarmSeen.set(url, { at: now, deep: true });
+        fresh.push(url);
+        deepWanted -= 1;
+        if (fresh.length >= 8) break;
+      }
+      continue;
+    }
+    const willDeep = deepWanted > 0;
+    mediaPrewarmSeen.set(url, { at: now, deep: willDeep });
+    fresh.push(url);
+    if (willDeep) deepWanted -= 1;
+    if (fresh.length >= 8) break;
+  }
+  if (mediaPrewarmSeen.size > 400) {
+    for (const [url, entry] of mediaPrewarmSeen) {
+      if (now - entry.at > MEDIA_PREWARM_TTL_MS) mediaPrewarmSeen.delete(url);
+    }
+  }
+  if (!fresh.length) return { queued: 0 };
+
+  const deep = fresh.filter((url) => mediaPrewarmSeen.get(url)?.deep);
+  const shallow = fresh.filter((url) => !deep.includes(url));
+  if (deep.length) console.log(`[首帧预热] 深度排队 ${deep.length} 条：${String(deep[0]).slice(0, 60)}`);
+  // 深度预热是串行链（resolve→清单→密钥→分片），一次只跑一条，别把源站打死
+  (async () => {
+    for (const url of deep) {
+      const stats = await deepWarmMedia(url).catch(() => null);
+      if (stats) console.log(`[首帧预热] ${String(url).slice(0, 60)} resolve=${stats.resolveMs}ms kind=${stats.kind} 清单=${stats.manifestBytes}B key=${stats.keys} ${stats.note}`);
+    }
+  })().catch(() => {});
+  (async () => {
+    await applyProxySetting().catch(() => {});
+    const startedAt = Date.now();
+    // 浅热只是热 DNS/TLS/边缘节点，一条要 1~3 秒，串行会拖到十几秒 → 三路并发
+    const queue = shallow.slice();
+    const workers = [];
+    for (let i = 0; i < Math.min(3, queue.length); i += 1) {
+      workers.push((async () => {
+        while (queue.length) {
+          const url = queue.shift();
+          await mediaWarmGet(url, mediaWarmHeaders(url), { range: 'bytes=0-262143' }).catch(() => null);
+        }
+      })().catch(() => {}));
+    }
+    await Promise.all(workers);
+    if (shallow.length) console.log(`[首帧预热] 浅热 ${shallow.length} 条连接 ${Date.now() - startedAt}ms`);
+  })().catch(() => {});
+  return { queued: fresh.length, deep: deep.length };
+});
+
+/* ================= v3.4.2 豆瓣元数据（纯增量，学习 LibreTV 的公开接口用法） =================
+   四个只读通道：热门列表 / 片名联想 / 条目摘要 / 海报匹配，外加一个图片中转
+   （豆瓣图片 CDN 无 Referer 返回 418、错误 Referer 返回 403，必须主进程带对头去取）。
+   全部走 defaultSession（继承应用代理）并带 10 分钟缓存；失败只返回 { ok:false }，不抛。
+*/
+const { createDoubanProvider } = require('./douban.cjs');
+let doubanProvider = null;
+function doubanClient() {
+  if (!doubanProvider) {
+    doubanProvider = createDoubanProvider({ session, cacheDir: path.join(app.getPath('userData'), 'cf8-douban') });
+  }
+  return doubanProvider;
+}
+const doubanSafe = (promise) => promise.catch((error) => ({ ok: false, error: String(error?.message || error) }));
+
+ipcMain.handle('douban:hot', (_event, payload = {}) => doubanSafe(doubanClient().hot(payload)));
+ipcMain.handle('douban:suggest', (_event, query) => doubanSafe(doubanClient().suggest(query)));
+ipcMain.handle('douban:search', (_event, payload = {}) => doubanSafe(doubanClient().search(payload)));
+ipcMain.handle('douban:subject', (_event, payload = {}) => doubanSafe(doubanClient().subject(payload)));
+ipcMain.handle('douban:poster', (_event, payload = {}) => doubanSafe(doubanClient().poster(payload)));
+ipcMain.handle('douban:image', (_event, payload = {}) => doubanSafe(doubanClient().image(payload)));
+
+/* ================= v3.4.3 纯增量：every.film 开放元数据（海报 / 上游 id 解析兜底） =================
+   两个只读通道：search（中文片名 → 记录 + 海报）与 lookup（再取 detail 拿 tmdb/imdb/douban id）。
+   全部走 defaultSession（继承应用代理），单道闸串行 + 最小间隔 420ms + 429 按 Retry-After 退避 + 结果缓存；
+   失败只返回 { ok:false }，不抛。遵守该站 API 使用条款：读取无需密钥、渲染层负责署名与回链。
+*/
+const { createEveryfilmProvider } = require('./everyfilm.cjs');
+let everyfilmProvider = null;
+function everyfilmClient() {
+  if (!everyfilmProvider) everyfilmProvider = createEveryfilmProvider({ session });
+  return everyfilmProvider;
+}
+const everyfilmSafe = (promise) => promise.catch((error) => ({ ok: false, error: String(error?.message || error) }));
+
+ipcMain.handle('everyfilm:search', (_event, payload = {}) => everyfilmSafe(everyfilmClient().search(payload)));
+ipcMain.handle('everyfilm:detail', (_event, payload = {}) => everyfilmSafe(everyfilmClient().detail(payload)));
+ipcMain.handle('everyfilm:lookup', (_event, payload = {}) => everyfilmSafe(everyfilmClient().lookup(payload)));
+ipcMain.handle('everyfilm:image', (_event, payload = {}) => everyfilmSafe(everyfilmClient().image(payload)));
+
+/* ================= v3.4.3 第三十一轮纯增量：无凭证兜底时保留一条可播线路（如意资源） =================
+   豆瓣条目没有 TMDB id，基线的详情/资源链路进不去，所以摘要卡下面只能显示"播放需 TMDB 凭证"。
+   这里补一条：按片名 + 年份直接问一次**应用本来就内置**的"如意资源"（RESOURCE_SOURCES 里 key='ruyi'
+   那条，api / modes 一字未改），复用基线自己的 searchResourceSource（含候选打分、详情回灌、线路解析），
+   拿回来的就是详情页同一种 compact 资源对象；再过一遍第十五轮的 filterResources，
+   媒体类型判断与详情页完全一致（电影卡不会给出 61 集的短剧）。
+   只读、单源、不新增任何播放实现：播放器 / resolve / 代理 / 预热全部走基线原有链路。
+*/
+const RUYI_FALLBACK_SOURCE = RESOURCE_SOURCES.find((source) => source.key === 'ruyi') || null;
+const RUYI_FALLBACK_TTL_MS = 10 * 60 * 1000;
+const RUYI_FALLBACK_CANDIDATES = 4;
+const ruyiFallbackCache = new Map();
+
+// 基线的 searchResourceSource 命中第一条就打止，而"某某[电影解说]"与正片归一化后同名、分数一样，
+// 于是它可能先返回被第十五轮判掉的那条。这里沿用同一批函数，但把 filter 挪进循环里：
+// 逐条候选"回灌详情 → compact → 媒体类型判断"，拿第一条通过的为止。
+async function ruyiFallbackResource(query) {
+  const titles = uniqueResourceQueries(query).slice(0, 2);
+  const year = releaseYearOf(query);
+  for (const title of titles) {
+    let list = [];
+    try {
+      const data = await resourceFetchJson(RUYI_FALLBACK_SOURCE, { ac: 'videolist', wd: title });
+      list = Array.isArray(data?.list) ? data.list : [];
+    } catch {
+      continue;
+    }
+    const ranked = list
+      .map((item) => ({ item, score: resourceCandidateScore(item, titles, year) }))
+      .filter((entry) => entry.score >= 44)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, RUYI_FALLBACK_CANDIDATES);
+    for (const { item } of ranked) {
+      try {
+        const hydrated = await hydrateResourceDetail(RUYI_FALLBACK_SOURCE, item);
+        const compact = compactResourceItem(RUYI_FALLBACK_SOURCE, hydrated, query);
+        if (!compact) continue;
+        const { resources, dropped } = filterResources([compact], query);
+        if (dropped.length) {
+          console.log(`[兜底播放源] 丢弃 ${dropped.map((d) => `${d.title}(${d.reason})`).join(' , ').slice(0, 160)}`);
+        }
+        if (resources.length) return resources[0];
+      } catch {
+        // 单条候选失败就下一条
+      }
+    }
+  }
+  return null;
+}
+
+ipcMain.handle('douban:playSource', async (_event, payload = {}) => {
+  const title = String(payload?.title || '').trim();
+  if (!RUYI_FALLBACK_SOURCE) return { ok: false, error: '没有内置的兜底播放源' };
+  if (title.length < 2) return { ok: false, error: '片名太短' };
+  const settings = publicResourceSettings();
+  if (!settings.enabled) return { ok: false, error: '外部源已关闭', disabled: true };
+  const mediaType = String(payload?.mediaType || '').toLowerCase() === 'tv' ? 'tv' : 'movie';
+  const query = {
+    title,
+    originalTitle: String(payload?.originalTitle || title).trim(),
+    year: String(payload?.year || ''),
+    releaseDate: String(payload?.releaseDate || ''),
+    mediaType,
+  };
+  const key = `${mediaType}:${query.title}:${query.originalTitle}:${query.year}`;
+  const cached = ruyiFallbackCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  try {
+    const resource = await ruyiFallbackResource(query);
+    if (!resource) return { ok: false, error: '如意资源没有匹配到这部' };
+    const value = { ok: true, sourceKey: RUYI_FALLBACK_SOURCE.key, sourceName: RUYI_FALLBACK_SOURCE.name, resource };
+    ruyiFallbackCache.set(key, { expiresAt: Date.now() + RUYI_FALLBACK_TTL_MS, value });
+    if (ruyiFallbackCache.size > 60) ruyiFallbackCache.delete(ruyiFallbackCache.keys().next().value);
+    return value;
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+});
+
+/* ================= v3.4.4 纯增量：GitHub Release 检查 / 直连下载 / 一键覆盖安装 =================
+   查询与下载都在 electron/updater.cjs 里（node:https 直连：api.github.com 走本机代理会被
+   共用出口 IP 判成 API 限流，实测直连 200 / 代理 403）。这里只做通道与收尾：
+   - update:check    只读，返回当前版本、最新正式版、本机该下哪个包（按平台/架构挑）
+   - update:download 流式下载到 userData/updates，边下边通过 update:progress 推给渲染层
+   - update:install  Windows 静默跑 NSIS 安装包（/S、per-user、不弹 UAC），随后退出应用让安装器覆盖
+   - update:reveal   其它平台或不支持静默安装时，把下载好的文件在资源管理器里打开
+   已有的播放 / 资源 / 凭证链路一行未改。
+*/
+const { createUpdater } = require('./updater.cjs');
+let updaterClient = null;
+function updaterClientSafe() {
+  if (!updaterClient) updaterClient = createUpdater({ app, session });
+  return updaterClient;
+}
+
+ipcMain.handle('update:check', async (_event, payload = {}) => {
+  try {
+    return await updaterClientSafe().check(payload);
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+});
+
+ipcMain.handle('update:download', async (_event, payload = {}) => {
+  try {
+    return await updaterClientSafe().download(payload);
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+});
+
+ipcMain.handle('update:install', async (_event, payload = {}) => {
+  const client = updaterClientSafe();
+  const result = client.install(payload);
+  if (result?.ok) {
+    // 给安装器一点时间起来，然后退出自己，让它能覆盖 win-unpacked / 已安装目录里的文件
+    setTimeout(() => {
+      try { app.quit(); } catch { /* 退出失败也无所谓，安装器会等 */ }
+    }, 900);
+  }
+  return result;
+});
+
+ipcMain.handle('update:reveal', async (_event, payload = {}) => {
+  const dir = updaterClientSafe().dir;
+  const target = String(payload?.path || '');
+  try {
+    if (target && path.dirname(target) === dir) shell.showItemInFolder(target);
+    else if (dir) shell.openPath(dir);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
   }
 });

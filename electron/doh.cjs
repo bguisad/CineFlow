@@ -161,7 +161,7 @@ function createDohResolver(options = {}) {
       const lib = url.protocol === 'http:' ? http : https;
       const req = lib.get(url.toString(), {
         agent: url.protocol === 'http:' ? KEEP_ALIVE_HTTP_AGENT : KEEP_ALIVE_HTTPS_AGENT,
-        headers: { accept: 'application/dns-json', 'user-agent': 'CineFlow-DoH/3.4.0' },
+        headers: { accept: 'application/dns-json', 'user-agent': 'CineFlow-DoH/3.4.4' },
         timeout: lookupTimeoutMs
       }, (res) => {
         let text = '';

@@ -6,6 +6,7 @@
 
 const ENTER_MS = 360; // 与 CSS 的 --cf3-enter-ms 成对：动效一摘就要正好落到静息态
 const SWITCH_MS = ENTER_MS + 90; // 收尾兜底时长，动效绝不会把界面留在半空
+const WARM_OPACITY = 0.012; // 肉眼看不出的"露一点点"，只为逼合成器把整页栅格化一次
 
 // 环回取模：两端都不封顶，跨界那一步的方向仍由按键决定
 function wrapIndex(value, size) {
@@ -64,12 +65,58 @@ export function createPageTransition({ root, pages, onSwitch } = {}) {
     if (el.parentElement !== slot) {
       slot.append(el);
       page.activate?.();
+      el.classList.add('cf3-warm'); // 常驻提层：动效开始时不再临场建层
     }
     el.style.visibility = 'visible';
     // 入场页是不透明整屏板：静息/动效期间都保持 opacity 1，动效只推位移
     el.style.opacity = '1';
     el.inert = false;
     return el;
+  }
+
+  // 帧回调必须带兜底：窗口被遮挡或被节流时 requestAnimationFrame 可以永远不回来，
+  // 而这一层是"先画一帧再起跳"的设计 —— 没有兜底就会把切页永久卡在半空
+  // （入场页停在 1.2%、stage 留着 is-switching、body 的 cf3-switching 还会把整站点击锁死）。
+  function nextFrame(cb, fallbackMs) {
+    let done = false;
+    const run = () => {
+      if (done) return;
+      done = true;
+      cb();
+    };
+    try {
+      requestAnimationFrame(run);
+    } catch (error) {
+      /* 拿不到帧就交给计时器 */
+    }
+    window.setTimeout(run, fallbackMs);
+    return run;
+  }
+
+  // 基线自己有个掉帧守卫（renderer.js setupPremiumMotionGuard），它标了就是这台机器此刻不给稳定帧，
+  // 那就不等了 —— 层已经预热过，直接起跳，别拿正确性换那一帧。
+  function framesUnstable() {
+    return document.body.classList.contains('is-motion-throttled');
+  }
+
+  // 预热：静息隐藏的页只改 opacity 到 1.2%，逼一次整页栅格化后再压回 0。
+  // 不这么做的话，"切进一个从没画过的整屏板"这件事会把动效的头 240~380ms 全吃掉
+  // （实测：同步 JS 只花 0~14ms、没有任何长任务，卡顿完全在栅格化侧）。
+  function warm(index) {
+    const el = pageEl(index);
+    if (!el || el.parentElement !== slot || index === current) return;
+    if (el.style.opacity !== '0') return;
+    el.style.opacity = String(WARM_OPACITY);
+    nextFrame(() => {
+      if (el.style.opacity === String(WARM_OPACITY)) el.style.opacity = '0';
+    }, 90);
+  }
+
+  function warmOthers() {
+    const idle = window.requestIdleCallback || ((cb) => window.setTimeout(cb, 240));
+    idle(() => {
+      for (let index = 1; index < pages.length; index += 1) warm(index);
+    });
   }
 
   // 静息态：首页 = 这一层完全透明（基线自己渲染）；其余页 = 真实页面铺满层。
@@ -110,13 +157,30 @@ export function createPageTransition({ root, pages, onSwitch } = {}) {
     layer.classList.add('is-switching');
     if (from === 0 || index === 0) layer.classList.add('is-home-edge'); // 幕布只在跟首页交界的那一路出现
     document.body.classList.add('cf3-switching');
+    switching = { from, to: index, entering, leaving, timer: 0 };
 
-    if (entering) entering.classList.add('cf3-enter', forward ? 'is-forward' : 'is-backward');
-    // 有页盖住时旧页只退暗（褪到 0 会让首页从两页中间透出来闪一下），回首页那一路才真淡出
-    if (leaving) {
-      leaving.classList.add('cf3-leave', forward ? 'is-forward' : 'is-backward', index === 0 ? 'is-reveal' : 'is-cover');
+    // 内容先建好、先画一帧，动画再从下一帧起跳：入场页不会因为临场建层而把动效头 300ms 冻住。
+    // 这一帧入场页只露 1.2%，看到的仍是旧页 —— 不然会先硬切再倒退着滑一下。
+    // 但"等一帧"只在帧稳定时做：帧不回来时必须直接起跳，否则切页会卡死在半空。
+    const start = () => {
+      if (!switching || switching.from !== from || switching.to !== index) return;
+      if (entering) {
+        entering.style.opacity = '1';
+        entering.classList.add('cf3-enter', forward ? 'is-forward' : 'is-backward');
+      }
+      // 有页盖住时旧页只退暗（褪到 0 会让首页从两页中间透出来闪一下），回首页那一路才真淡出
+      if (leaving) {
+        leaving.classList.add('cf3-leave', forward ? 'is-forward' : 'is-backward', index === 0 ? 'is-reveal' : 'is-cover');
+      }
+      switching.timer = window.setTimeout(finalizeSwitch, SWITCH_MS);
+    };
+    if (entering && !framesUnstable()) {
+      void entering.offsetHeight;
+      entering.style.opacity = String(WARM_OPACITY);
+      nextFrame(start, 40);
+    } else {
+      start();
     }
-    switching = { from, to: index, entering, leaving, timer: setTimeout(finalizeSwitch, SWITCH_MS) };
   }
 
   function finalizeSwitch() {
@@ -134,6 +198,7 @@ export function createPageTransition({ root, pages, onSwitch } = {}) {
     pages[from].leave?.();
     pages[from].settle?.(); // 离开的页顺手收起自己的浮层，回来时不会挡着
     onSwitch?.(to);
+    warmOthers(); // 刚离开的那一页马上补热，下一次切回来同样不掉帧
   }
 
   function swapInstantly(index) {
@@ -204,6 +269,7 @@ export function createPageTransition({ root, pages, onSwitch } = {}) {
       if (!mountPage(index)) return;
       // 只挂载不露出：静息态会把非当前页压回 opacity 0 + inert，栅格借此提前落好
       applyRestState();
+      warm(index);
     },
     dispose() {
       if (switching) finalizeSwitch();
