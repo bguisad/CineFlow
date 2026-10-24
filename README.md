@@ -2,7 +2,7 @@
 
 ![CineFlow Preload](build/bg.png)
 
-流畅、可定制的桌面电影/节目推荐应用。（已在开源社区上发布）
+流畅、可定制的桌面电影/节目推荐应用。
 
 **CineFlow**基于Electron + Vite构建，使用TMDB数据源、豆瓣API兜底，支持自然语言搜索、个性化推荐、搜索词条词云化、灵动岛模式、片源统一管理与应用内播放，并支持一键投屏到局域网设备。
 
@@ -109,6 +109,8 @@ CineFlow/
 |--申请API.md
 └─ README.md
 ```
+
+Proudly supported by the LINUX DO community.
 
 ## Star增长
 
