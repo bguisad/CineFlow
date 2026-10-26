@@ -114,7 +114,7 @@ Proudly supported by the LINUX DO community.
 
 ## Star增长
 
-<a href="https://www.star-history.com/?repos=incldue%2Fcineflow&type=date&legend=bottom-right">
+<a href="https://www.star-history.com/?repos=incldue%2Fcineflow&type=date&logscale=&legend=bottom-right">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=incldue/cineflow&type=date&theme=dark&legend=bottom-right" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=incldue/cineflow&type=date&legend=bottom-right" />
