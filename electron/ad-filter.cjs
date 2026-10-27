@@ -1,13 +1,5 @@
 'use strict';
 
-// Strong m3u8 ad filter (pure string pass, additive hook, never throws to caller).
-// Strategy:
-//   1. Remove whole ad breaks delimited by #EXT-X-CUE-OUT / #EXT-X-CUE-IN (incl. SCTE-35 dateranges).
-//   2. Group segments by #EXT-X-DISCONTINUITY boundaries; drop short stitched-in bursts
-//      (typical采集站 ads) while keeping the dominant content group.
-//   3. Strip remaining discontinuity/cue/scte markers so the player sees one clean timeline.
-// Falls back to the original content whenever parsing looks unsafe.
-
 const AD_HINT_RE = /SCTE35|X-SCTE|CUE-OUT|CUE-IN|-AD[-="]|ID=("?)ad/i;
 
 function isUriLine(line) {
@@ -118,7 +110,6 @@ function filterAdsFromM3u8(content) {
   let work = content;
 
   try {
-    // Pass 1: drop CUE-OUT..CUE-IN breaks (segments included) when both markers exist.
     if (/#EXT-X-CUE-OUT/i.test(work) && /#EXT-X-CUE-IN/i.test(work)) {
       const lines = work.split(/\r?\n/);
       const out = [];
@@ -133,7 +124,6 @@ function filterAdsFromM3u8(content) {
       work = out.join('\n');
     }
 
-    // Pass 2: discontinuity-burst removal on media playlists (EXTINF present).
     if (/#EXT-X-DISCONTINUITY\b/i.test(work) && /#EXTINF/i.test(work)) {
       const parsed = parseMediaPlaylist(work.split(/\r?\n/));
       if (!parsed.head.some((line) => /#EXT-X-STREAM-INF/i.test(line))) {
@@ -144,7 +134,6 @@ function filterAdsFromM3u8(content) {
       }
     }
 
-    // Pass 3: strip leftover ad/discontinuity markers (aligns with reference behaviour).
     if (/#EXT-X-DISCONTINUITY(-SEQUENCE)?\b|^#EXT-X-(CUE-OUT|CUE-IN|AS-SCTE35)/im.test(work)) {
       work = work
         .split(/\r?\n/)

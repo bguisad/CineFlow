@@ -70,7 +70,7 @@ function createPlaybackProxyGuard(deps) {
       settings.playbackProxyMode = mode;
       writeSettings(settings);
     } catch {
-      // keep runtime value even if persistence failed
+
     }
     resetStreaks();
     announce();
@@ -158,7 +158,7 @@ function createPlaybackProxyGuard(deps) {
       const pending = session.defaultSession.closeAllConnections();
       if (pending && typeof pending.catch === 'function') pending.catch(() => {});
     } catch {
-      // best-effort
+
     }
   }
 
@@ -183,7 +183,7 @@ function createPlaybackProxyGuard(deps) {
   }
 
   async function handleDirectUpstream(req, res, targetUrl) {
-    // v3.4.0：DoH 端点不可达时立刻让位给主进程原生上行，避免每个分片等满 8s 超时造成卡顿
+
     if (typeof doh?.health === 'function' && !doh.health().reachable) return false;
     const {
       isLikelyM3u8Response,

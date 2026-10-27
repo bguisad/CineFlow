@@ -1,34 +1,14 @@
 'use strict';
 
-/**
- * v3.4.4 纯增量：GitHub Release 检查 + 直连下载 + 一键覆盖安装。
- *
- * 只做三件事，全部只读/显式触发：
- *   1. check()    查 https://api.github.com/repos/incldue/CineFlow/releases/latest，
- *                 返回"有没有比当前版本新的正式版 + 本机该下哪个包"。
- *   2. download() 把选中的安装包流式下到 userData/updates/，边下边发进度。
- *   3. install()  Windows 上静默运行安装包（/S，per-user 安装，不弹 UAC），随后由调用方退出应用。
- *
- * 两个实测出来的网络事实（决定实现方式）：
- *   - api.github.com **直连 200**；走本机 Clash（127.0.0.1:7897）会因共用出口 IP 被判
- *     "API rate limit exceeded"（403）。所以这里用 node:https 直连，只在网络层失败时才
- *     退到 session.fetch（继承应用代理）。
- *   - 下载资源会 302 到 objects.githubusercontent.com，必须手动跟随（≤4 跳）。
- *
- * 边界：只从 github.com / api.github.com / objects.githubusercontent.com 下载 https 资源；
- * 只接受 .exe / .dmg / .zip / .AppImage；绝不执行下载下来的脚本，只把安装包交给系统安装器。
- */
-
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const REPO = 'incldue/CineFlow';
-// 仅用于本机诊断：CINEFLOW_UPDATE_FEED_URL 指向本地假 feed 时只影响"查询"这一步，
-// 下载仍强制只认 github.com / objects.githubusercontent.com，避免把下载通道变成任意 URL 拉取。
+
 const FEED_URL = String(process.env.CINEFLOW_UPDATE_FEED_URL || '').trim();
 const API_LATEST = FEED_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
-const UA = 'CineFlow/3.4.4 (personal desktop app; update check)';
+const UA = 'CineFlow/3.4.6 (personal desktop app; update check)';
 const REQUEST_TIMEOUT_MS = 9000;
 const CHECK_TTL_MS = 10 * 60 * 1000;
 const FAIL_TTL_MS = 2 * 60 * 1000;
@@ -118,7 +98,6 @@ async function requestFollow(urlStr, options = {}) {
   throw new Error('重定向过多');
 }
 
-// ---- 资源挑选：按平台/架构选"最适合这台机器"的那一个 ----
 function pickAsset(assets = [], { platform = process.platform, arch = process.arch } = {}) {
   const list = assets
     .filter((asset) => asset && typeof asset.name === 'string' && typeof asset.browser_download_url === 'string')
@@ -128,7 +107,7 @@ function pickAsset(assets = [], { platform = process.platform, arch = process.ar
   let asset = null;
   let label = '';
   if (platform === 'win32') {
-    // 一键覆盖安装要的就是 NSIS 安装包；架构无关（x64 包在 arm64 Windows 上也能装）
+
     asset = by(/-Setup\.exe$/i) || by(/\.exe$/i);
     label = 'Windows 安装包';
   } else if (platform === 'darwin') {
@@ -149,7 +128,6 @@ function pickAsset(assets = [], { platform = process.platform, arch = process.ar
   };
 }
 
-// 真流式下载：边收边写盘 + 每 ~150ms 报一次进度（100MB 的安装包不能整块读进内存）
 function streamToFile(urlStr, filePath, onProgress) {
   return new Promise((resolve, reject) => {
     const attempt = (current, hops) => {
@@ -245,7 +223,7 @@ function createUpdater({ app, session, cacheDir } = {}) {
       state.etag = String(result.headers.etag || '');
       return { release: parsed };
     } catch (error) {
-      // 直连失败（断网/DNS）时才退到 session.fetch（继承应用代理）
+
       if (!session?.defaultSession?.fetch) return { error: String(error?.message || error) };
       try {
         const response = await session.defaultSession.fetch(API_LATEST, {
@@ -291,12 +269,10 @@ function createUpdater({ app, session, cacheDir } = {}) {
       const win = require('electron').BrowserWindow.getAllWindows()[0];
       win?.webContents?.send('update:progress', payload);
     } catch {
-      /* 窗口没了就只是不发进度 */
+
     }
   }
 
-  // 走 session（继承应用代理）的流式下载：实测 github.com 的 Release 资产直连不通、代理 206，
-// 而 api.github.com 恰好相反 —— 所以下载先走 session，失败再退回直连，两条路都不改调用方。
 async function streamViaSession(session, url, filePath, onProgress) {
   const fetchImpl = session?.defaultSession?.fetch;
   if (!fetchImpl) throw new Error('session.fetch 不可用');
@@ -317,12 +293,12 @@ async function streamViaSession(session, url, filePath, onProgress) {
     let lastAt = 0;
     for (;;) {
       armIdle();
-      // eslint-disable-next-line no-await-in-loop
+
       const { done, value } = await reader.read();
       if (done) break;
       received += value.length;
       if (!out.write(Buffer.from(value))) {
-        // eslint-disable-next-line no-await-in-loop
+
         await new Promise((resolve) => out.once('drain', resolve));
       }
       const now = Date.now();
@@ -361,7 +337,7 @@ async function download({ url, name } = {}, onProgress = sendProgress) {
       } catch (sessionError) {
         try {
           if (fs.existsSync(part)) fs.unlinkSync(part);
-        } catch { /* ignore */ }
+        } catch {   }
         ({ bytes, total } = await streamToFile(url, part, onProgress));
       }
       fs.renameSync(part, target);
@@ -379,17 +355,16 @@ async function download({ url, name } = {}, onProgress = sendProgress) {
     } catch (error) {
       try {
         if (fs.existsSync(part)) fs.unlinkSync(part);
-      } catch { /* ignore */ }
+      } catch {   }
       return { ok: false, error: String(error?.message || error) };
     } finally {
       activeDownload = null;
     }
   }
 
-  // Windows：静默跑 NSIS 安装包（per-user 安装、不弹 UAC），随后由渲染层让应用退出
   function install({ path: file } = {}) {
     if (process.platform !== 'win32') return { ok: false, error: '当前系统不支持静默覆盖安装，已打开安装包' };
-    // path.resolve 会把 `/` 归一成 Windows 分隔符，渲染层传什么写法都能对上
+
     const target = path.resolve(String(file || ''));
     if (!/\.exe$/i.test(target) || !fs.existsSync(target)) return { ok: false, error: '安装包不存在' };
     if (path.dirname(target) !== path.resolve(dir)) return { ok: false, error: '安装包不在下载目录内' };

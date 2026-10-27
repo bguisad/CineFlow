@@ -1,40 +1,11 @@
-/**
- * v3.4.2 纯增量：豆瓣海报兜底 + 无 TMDB 凭证时的豆瓣片单。
- *
- * 思路来自 LibreTV：它的首页完全由豆瓣公开接口供给（热门电影/剧集），海报直接用豆瓣 CDN。
- * CineFlow 的详情页需要 TMDB id，所以这里**不改详情链路**，只补两件事：
- *
- *   A. 海报兜底（有凭证也生效）：卡片海报缺失（No Poster）或加载失败时，按片名去豆瓣联想接口
- *      找同名片，经主进程中转图片字节（豆瓣 CDN 不带 Referer 会 418/403）后换上海报。
- *      TMDB 图片被墙、或该片 TMDB 无 poster_path 时，首页/片库/搜索/收藏都能看到图。
- *   B. 无凭证时的首页与片库：首页两条空轨道渲染豆瓣热门电影/剧集；分类片库通过 fetchDoubanMovies
- *      改为豆瓣片单（分类胶囊映射成豆瓣标签）。这些卡片带 data-cf8-douban，点击由本层接管，
- *      弹出豆瓣资料卡（评分/类型/地区/简介/演员）。**播放仍需要 TMDB 凭证**，卡片上不做假按钮。
- *
- * 所有网络失败都静默降级；摘掉本文件 + incremental-pages.js 两行挂钩 + cf8 样式即回退。
- *
- * 第二十七轮（海报贴不出来的三处修正）：
- *   1. 轨道改成一条一条补，且已经是豆瓣片单的轨道绝不重画 —— 以前基线一重写 empty-state，
- *      两条轨道会一起被抹掉重画，刚贴好的海报跟着没（"刷新也没用"）。
- *   2. 片单自带豆瓣封面时不再并行问 every.film（它的图片端点首查实测 19s/张，36 张排长队白耗带宽内存）。
- *   3. 封面中转失败不再串三跳 rexxar 检索（会把主进程 320ms 闸门堵死），60s 后由补网扫描重试。
- *
- * 第二十八轮（"还是没出来、刷新也没用"继续加固）：
- *   4. 取图改成**看得见才取**（IntersectionObserver + 320px 预备边）：一条轨道 18 张首屏只露 6~7 张，
- *      一次全取就是 36 个中转请求 —— 反复刷新正是被豆瓣 CDN 限流的原因。
- *   5. 图片**既不完成也不报错**（连接被挂住）时，4.5s 看门狗到点当它坏了直接改走兜底；
- *      以前只等 error 事件，那种卡片会永远空着。
- *   6. 主进程侧新增落盘缓存与备用地址重试（见 electron/douban.cjs 顶部说明）：刷新/重启零请求。
- */
-
 const POSTER_TTL_MS = 30 * 60 * 1000;
-const POSTER_WATCHDOG_MS = 4500; // 图片既不完成也不报错时，最多等这么久就改走兜底
-const posterCache = new Map(); // mediaType:title:year -> dataUrl | ''
-const posterInflight = new Map(); // 同一个片名并发只查一次
-const imageCache = new Map(); // douban image url -> dataUrl
+const POSTER_WATCHDOG_MS = 4500;
+const posterCache = new Map();
+const posterInflight = new Map();
+const imageCache = new Map();
 const sheetState = { item: null, open: false };
-let state = null; // 基线的 state（只用它的 credential 与 resourcePlaylists 两个现成字段）
-let mounted = false; // 注意：不能用 documentElement.dataset.cf8Douban 当标记，会和卡片属性同名把 <html> 也选中
+let state = null;
+let mounted = false;
 
 const clean = (value) => String(value || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
 const DOUBAN_IMAGE_RE = /^https:\/\/[a-z0-9-]+\.doubanio\.com\//i;
@@ -66,8 +37,6 @@ function everyfilmBridge() {
   return window.cineflowEveryfilm;
 }
 
-// every.film 的海报域名直连可取，但渲染层 <img> 走的是 session（本机代理出口会被 Cloudflare 判 403），
-// 所以和豆瓣图片一样由主进程把字节取回来转 data URL；匹配到就省掉豆瓣那一次联想。
 async function everyfilmPoster({ title, year, mediaType, wantDataUrl = true } = {}) {
   const bridge = everyfilmBridge();
   if (!bridge?.lookup || !title) return '';
@@ -82,9 +51,6 @@ async function everyfilmPoster({ title, year, mediaType, wantDataUrl = true } = 
   return data;
 }
 
-// 两个来源并行问、谁先给出非空海报就用谁：every.film 匹配准但首查可能慢（实测 0.8~19s，之后走缓存），
-// 豆瓣那路一直是 1~2s。并行才不会因为等 every.film 而把破图时间拉长。
-// 全部问完都没有就用 '' 收尾 —— 这里绝不能用 Promise.race + 挂起的哨兵，那样两路都空时会永久悬住。
 function firstSettledValue(sources) {
   return new Promise((resolve) => {
     let finished = 0;
@@ -106,8 +72,7 @@ function firstSettledValue(sources) {
 
 async function doubanPosterPath({ title, year, mediaType, cover = '' }) {
   if (DOUBAN_IMAGE_RE.test(String(cover || ''))) {
-    // 片单本来就带着豆瓣封面：这一次中转拿不到就是网络/限流，再去串三跳 rexxar 检索只会把
-    // 主进程那道 320ms 的请求闸门堵死（实测每张多等 1~3s，36 张就是半分钟）。直接失败，交给重试。
+
     return await doubanImageDataUrl(cover);
   }
   const result = await bridge()?.poster({ title, year, type: mediaType }).catch(() => null);
@@ -125,8 +90,7 @@ async function resolvePoster({ title, year, mediaType, cover = '' }) {
   const hasCover = DOUBAN_IMAGE_RE.test(String(cover || ''));
   const task = (async () => {
     try {
-      // 有豆瓣封面时不再惊动 every.film：它的图片端点首查实测要 19s，36 张排下来会一直占着带宽和内存，
-      // 而这些卡片本来就有封面。只有"TMDB 没给海报"的卡片才值得两条路并行问。
+
       const sources = hasCover
         ? [() => doubanPosterPath({ title, year, mediaType, cover })]
         : [
@@ -134,7 +98,7 @@ async function resolvePoster({ title, year, mediaType, cover = '' }) {
           () => doubanPosterPath({ title, year, mediaType, cover })
         ];
       const data = await firstSettledValue(sources);
-      // 只把成功结果缓存满 30 分钟；失败 60 秒后可重试（上游偶发限流，不能把失败钉死）
+
       posterCache.set(key, data ? { at: Date.now(), data } : { at: Date.now() - POSTER_TTL_MS + 60 * 1000, data: '' });
       if (posterCache.size > 300) posterCache.delete(posterCache.keys().next().value);
       return data;
@@ -148,7 +112,7 @@ async function resolvePoster({ title, year, mediaType, cover = '' }) {
 
 function applyPoster(card, dataUrl) {
   if (!dataUrl) {
-    card.dataset.cf8Poster = ''; // 失败不封死，后面的扫描/错误事件还能再试
+    card.dataset.cf8Poster = '';
     return;
   }
   const frame = card.querySelector('.poster-frame');
@@ -158,7 +122,7 @@ function applyPoster(card, dataUrl) {
     img = document.createElement('img');
     img.alt = `${clean(card.querySelector('h3')?.textContent)} 海报`;
     img.decoding = 'async';
-    // 字节已经在手里（data URL），再标 lazy 只会让轨道里靠边的卡片滚到才解码 —— 看着就是"海报不出来"
+
     img.loading = 'eager';
     frame.insertBefore(img, frame.firstChild);
   }
@@ -177,8 +141,7 @@ async function patchCardPoster(card) {
     if (card.dataset.cf8PosterWatch) return;
     card.dataset.cf8PosterWatch = '1';
     const giveUp = () => {
-      // 只等 error 事件是不够的：图片卡在"既不完成也不报错"的状态时（连接被挂住），
-      // 卡片会永远空着，用户看到的就是"海报没出来、刷新也没用"。到点就当它坏了，改走兜底。
+
       if (img.complete && img.naturalWidth > 0) return;
       card.dataset.cf8PosterWatch = '';
       delete card.dataset.cf8Poster;
@@ -186,7 +149,7 @@ async function patchCardPoster(card) {
     };
     img.addEventListener('load', () => { card.dataset.cf8PosterWatch = ''; }, { once: true });
     img.addEventListener('error', () => {
-      // 先把状态清掉再重试：否则第一次还在 pending 时，错误事件会被这行挡回去
+
       card.dataset.cf8PosterWatch = '';
       delete card.dataset.cf8Poster;
       patchCardPoster(card);
@@ -196,11 +159,9 @@ async function patchCardPoster(card) {
   }
   card.dataset.cf8Poster = 'pending';
   const dataUrl = await resolvePoster({ ...meta, cover: card.__cf8Item?.cover || '' });
-  applyPoster(card, dataUrl); // 失败时 applyPoster 会把状态清回空，后面的补网扫描还能再试
+  applyPoster(card, dataUrl);
 }
 
-// 海报取图按"看得见才取"排队：一条轨道 18 张里首屏只露出 6~7 张，一次全取就是 36 个中转请求，
-// 刷新几次很容易被豆瓣 CDN 判限流（然后整条轨道一起空）。横向滚到才补、纵向滚到才补。
 let posterObserver = null;
 const posterWaiters = new WeakMap();
 function queuePoster(card) {
@@ -227,7 +188,6 @@ function scanPosters(root = document) {
   for (const card of root.querySelectorAll('.movie-card')) queuePoster(card);
 }
 
-// 供分类片库等自家模块复用：把豆瓣条目（或带 cf8* 字段的卡片数据）统一成资料卡入参
 export function openDoubanSheet(item = {}) {
   return openSheet({
     id: item.cf8Id || item.id,
@@ -238,8 +198,6 @@ export function openDoubanSheet(item = {}) {
     year: String(item.releaseDate || '').slice(0, 4)
   });
 }
-
-/* ---------------- 豆瓣资料卡 ---------------- */
 
 function ensureSheet() {
   let sheet = document.querySelector('.cf8-sheet');
@@ -268,7 +226,7 @@ function ensureSheet() {
           <p class="cf21-status"></p>
           <div class="cf21-play-lines"></div>
         </div>
-        <p class="cf8-sheet-note">豆瓣数据 · 播放需 TMDB 凭证</p>
+        <p class="cf8-sheet-note">豆瓣数据</p>
         <p class="cf16-sheet-credit" hidden><button type="button" class="cf16-credit-link">every.film</button><span>海报与评分 · CC-BY-SA 4.0</span></p>
       </div>
     </div>
@@ -316,9 +274,9 @@ async function openSheet(item) {
   sheet.querySelector('.cf8-sheet-cast').textContent = '';
   const posterBox = sheet.querySelector('.cf8-sheet-poster');
   posterBox.querySelector('img')?.remove();
-  // 摘要卡下面那条可播线路：不挡住摘要渲染，拿到才显形
+
   resetPlayBlock();
-  setSheetNote('豆瓣数据 · 播放需 TMDB 凭证');
+  setSheetNote('豆瓣数据');
   playState.run += 1;
   loadPlaySource(item);
 
@@ -333,7 +291,7 @@ async function openSheet(item) {
 
   const subject = await bridge()?.subject({ id: item.id, type: item.mediaType }).catch(() => null);
   if (!subject?.ok) {
-    // 豆瓣条目摘要拿不到时，用 every.film 补年份 / 中文片名 / 融合评分，并按条款署上来源
+
     await enrichSheetWithEveryfilm(sheet, item);
     retryPlaySource(item, sheet.querySelector('.cf8-sheet-title').textContent);
     return;
@@ -353,11 +311,10 @@ async function openSheet(item) {
     data.actors.length ? `主演：${data.actors.slice(0, 5).join(' / ')}` : ''
   ].filter(Boolean).join('\n');
   sheet.querySelector('.cf8-sheet-cast').textContent = cast;
-  // 摘要里拿到了准确年份 / 条目类型，第一次没匹配上就用它再问一次
+
   retryPlaySource({ ...item, year: data.year || item.year, mediaType: data.mediaType || item.mediaType }, data.title || item.title);
 }
 
-// 摘要里拿到准确年份后，只有"第一次确实问完了且没结果"才值得再敲一次源站
 function retryPlaySource(item, title) {
   const block = document.querySelector('.cf21-play');
   if (!block || !block.__cf21Done || block.__cf21Resource) return;
@@ -367,8 +324,6 @@ function retryPlaySource(item, title) {
   loadPlaySource({ ...item, title: clean(title) || item.title });
 }
 
-// every.film 没有 简介/类型/演职员 端点（实测），所以这里只补它确实有的那几项：
-// 中文片名、年份、融合评分（TMDB/IMDb/豆瓣合流），并在海报由它提供时显示署名。
 async function enrichSheetWithEveryfilm(sheet, item) {
   const bridge = everyfilmBridge();
   if (!bridge?.lookup) return;
@@ -398,8 +353,6 @@ async function enrichSheetWithEveryfilm(sheet, item) {
   }
 }
 
-/* ---------------- 无凭证时保留的一条播放源（应用内置的"如意资源"） ---------------- */
-
 const playState = { seq: 0, run: 0 };
 const VISIBLE_LINE_LIMIT = 3;
 const VISIBLE_EPISODE_LIMIT = 12;
@@ -415,7 +368,6 @@ function episodeDisplayLabel(label, index) {
   return `第 ${episodeNumberOf(text, index)} 集`;
 }
 
-// 把这条线路的分集表登记进基线自己维护的 state.resourcePlaylists —— 播放器列全集就靠它
 function registerPlaylist(resource, line, lineIndex) {
   const episodes = Array.isArray(line?.episodes) ? line.episodes : [];
   if (!episodes.length || !state?.resourcePlaylists?.set) return '';
@@ -441,8 +393,6 @@ function registerPlaylist(resource, line, lineIndex) {
   return playlistId;
 }
 
-// 起播走基线自己那个播放器：renderer.js 末尾只加了一行把 openResourcePlayer 多开一个门，
-// 原有的两处调用、resolve / 代理 / 广告过滤 / transport 回退逻辑一行没改。
 function playViaBaseline(attrs) {
   const open = window.__cineflowOpenResourcePlayer;
   if (typeof open !== 'function') {
@@ -473,7 +423,7 @@ function setPlayStatus(text) {
     status.hidden = !text;
   }
   if (lines) lines.innerHTML = '';
-  block.hidden = false; // 一行"如意资源"始终占位显示，找不到线路时也有个明确交代
+  block.hidden = false;
 }
 
 function resetPlayBlock() {
@@ -486,7 +436,7 @@ function resetPlayBlock() {
   const lines = block.querySelector('.cf21-play-lines');
   if (lines) lines.innerHTML = '';
   const meta = block.querySelector('.cf21-play-meta');
-  if (meta) meta.textContent = ''; // 换卡片时必须清掉上一部的"年份 · 备注 · 格式"，否则会串到没货的卡片上
+  if (meta) meta.textContent = '';
   const status = block.querySelector('.cf21-status');
   if (status) {
     status.textContent = '';
@@ -574,8 +524,7 @@ function playFromSheet(button) {
 
 async function loadPlaySource(item) {
   const block = document.querySelector('.cf21-play');
-  if (!block || block.__cf21Resource) return; // 已经有线路了，后面任何一次补问都不许把它冲掉
-  if (state?.credential?.configured) return; // 有凭证时基线详情链路本来就能播，这里不抢
+  if (!block || block.__cf21Resource) return;
   const badge = block.querySelector('.cf21-badge');
   if (badge) badge.textContent = '如意资源';
   const bridge = window.cineflowFallbackPlay;
@@ -599,18 +548,16 @@ async function loadPlaySource(item) {
     result = null;
   }
   block.__cf21Done = true;
-  // 摘要卡已经关掉，或者人已经切到别的卡片 —— 这一份结果作废（同一张卡片的补问不算切走）
+
   if (!sheetState.open || run !== playState.run) return;
   if (!result?.ok || !result.resource) {
-    // 找不到也把这行留着，写清楚原因，而不是让整块凭空消失
+
     setPlayStatus(result?.disabled ? '外部源已关闭' : '这部没找到可播线路');
     return;
   }
   renderPlayBlock(block, result.resource);
   setSheetNote('豆瓣数据 · 下方线路可直接播');
 }
-
-/* ---------------- 无凭证时的豆瓣片单 ---------------- */
 
 async function doubanHotMovies({ media = 'all', genre = '', page = 1, pageSize = 24 } = {}) {
   const hot = bridge()?.hot;
@@ -627,7 +574,7 @@ async function doubanHotMovies({ media = 'all', genre = '', page = 1, pageSize =
     releaseDate: '',
     voteAverage: Number(item.rating) || 0,
     voteCount: 0,
-    posterPath: '', // 豆瓣 CDN 有防盗链，交给海报兜底层中转换成 data URL
+    posterPath: '',
     cf8Douban: true,
     cf8Cover: item.cover,
     cf8Rating: item.rating
@@ -649,9 +596,6 @@ export async function fetchDoubanMovies(query = {}) {
   return mixed;
 }
 
-// 兜底片单直接复用基线卡片的 DOM 结构与类名：`.movie-rail` 是 `grid-auto-flow:column; grid-auto-columns:178px`
-// 的网格，之前这里塞了一个 .cf8-rail 包装层，整条片单就被塞进**一个 178px 网格列**里 —— 就是"海报全挤在左边"。
-// 现在卡片直接作为网格子项追加，尺寸、圆角、hover、图片填充全部自动跟首页一致。
 function renderDoubanRail(rail, title, items) {
   if (!rail) return;
   rail.innerHTML = '';
@@ -671,7 +615,7 @@ function renderDoubanRail(rail, title, items) {
     `;
     card.__cf8Item = Object.assign({}, item, { cover: item.cf8Cover || item.cover || '' });
     rail.appendChild(card);
-    // 海报统一交给兜底层：豆瓣封面 / every.film 两条路，看得见才取（queuePoster）
+
     queuePoster(card);
   }
 }
@@ -680,14 +624,11 @@ function escapeText(value) {
   return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// 一条轨道一条轨道地补，而且只补真的空掉的那条。
-// 上一版是两条轨道一起重画：基线的 TMDB 重试每隔几秒会把其中一条写成 empty-state，
-// 于是另一条刚贴好海报的轨道也被一起抹掉重来 —— 海报闪一下就没了，看起来就是"豆瓣海报不显示、刷新也没用"。
 async function fillRail(rail, { media, title, debug }) {
   if (!rail) return false;
-  if (rail.dataset.cf8Filling === media) return false; // 这一条正在填，别并发重画
-  if (rail.querySelector('.movie-card:not([data-cf8-douban])')) return true; // 基线的真卡片已到位，不抢
-  if (rail.querySelector('[data-cf8-douban]')) return true; // 已经是我们的片单，绝不重画
+  if (rail.dataset.cf8Filling === media) return false;
+  if (rail.querySelector('.movie-card:not([data-cf8-douban])')) return true;
+  if (rail.querySelector('[data-cf8-douban]')) return true;
   const empty = rail.querySelector('.rail-empty, .empty-state') || rail.childElementCount === 0;
   if (!empty) return false;
   rail.dataset.cf8Filling = media;
@@ -727,8 +668,7 @@ function mountDoubanFallback() {
   mounted = true;
 
   scanPosters();
-  // 海报是异步一张张贴的：首轮排队时失败的那几张（缓存里 60s 后作废）靠这几趟补回来，
-  // 不用用户手动刷新。三趟封顶，已贴好的卡片会在 patchCardPoster 第一行直接返回。
+
   [3000, 9000, 20000, 45000].forEach((delay) => window.setTimeout(() => scanPosters(), delay));
   const observer = new MutationObserver((records) => {
     for (const record of records) {
@@ -741,8 +681,6 @@ function mountDoubanFallback() {
   });
   observer.observe(document.querySelector('#app') || document.body, { childList: true, subtree: true });
 
-  // 豆瓣片单卡片：点击/悬停都别落到基线（它们没有 TMDB id）。捕获阶段统一处理，
-  // 卡片自己的打开逻辑也在这里做 —— 一旦 stopPropagation，捕获之后卡片上的监听器就收不到了。
   document.addEventListener('click', (event) => {
     const card = event.target instanceof Element ? event.target.closest('[data-cf8-douban]') : null;
     if (!card) return;
@@ -762,11 +700,9 @@ function mountDoubanFallback() {
     if (event.target instanceof Element && event.target.closest('[data-cf8-douban]')) event.stopPropagation();
   }, true);
 
-  window.cineflow.getCredentialState().then((state) => {
-    if (state?.configured) return;
+  window.cineflow.getCredentialState().then(() => {
     let tries = 0;
-    // 基线的失败态会在几秒后把轨道重写成 empty-state（把我们的片单一起盖掉），
-    // 所以这里不"填成功一次就收工"，而是持续盯 36 秒：只有出现真正的 TMDB 卡片才停。
+
     const timer = window.setInterval(async () => {
       tries += 1;
       await fillEmptyHome().catch(() => false);

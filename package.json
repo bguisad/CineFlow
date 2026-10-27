@@ -1,10 +1,10 @@
 {
   "name": "cineflow",
   "productName": "CineFlow",
-  "version": "3.4.4",
+  "version": "3.4.6",
   "description": "A smooth desktop movie recommendation app powered by TMDB.",
   "author": "debu8ger",
-  "main": "electron/main.cjs",
+  "main": "electron/bootstrap.cjs",
   "private": true,
   "scripts": {
     "dev": "node scripts/start-dev.cjs",
@@ -14,7 +14,9 @@
     "build:win:dir": "npm run build && electron-builder --win dir --config.win.signAndEditExecutable=false --publish never",
     "pack:portable": "npm run build && electron-builder --win portable --config.win.signAndEditExecutable=false --publish never",
     "build:mac": "npm run build && electron-builder --mac --publish never",
-    "build:linux": "npm run build && electron-builder --linux --publish never"
+    "build:linux": "npm run build && electron-builder --linux --publish never",
+    "test": "node scripts/run-tests.cjs",
+    "test:smoke": "npx electron scripts/electron-smoke.cjs"
   },
   "build": {
     "appId": "com.debu8ger.cineflow",
@@ -31,6 +33,9 @@
       "!**/node_modules/.cache/**/*"
     ],
     "asar": true,
+    "asarUnpack": [
+      "electron/rec-engine/**/*"
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [

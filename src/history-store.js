@@ -1,7 +1,3 @@
-// v3.4.0 纯增量：播放历史采集（零挂钩）
-// 不改播放链路：只用 MutationObserver 看 #playerModal 的开合 class、监听既有 <video> 的
-// timeupdate / ended，把"看到哪一秒"记进 localStorage。任何异常都只让历史为空，不影响播放。
-
 export const HISTORY_KEY = 'cineflow:history:v3';
 const MAX_ITEMS = 60;
 const FLUSH_MS = 5000;
@@ -25,7 +21,7 @@ function write(items) {
   try {
     window.localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, MAX_ITEMS)));
   } catch (error) {
-    /* 存储不可用时静默：历史页只会显示为空 */
+
   }
 }
 
@@ -71,13 +67,12 @@ function detailsOf(id, mediaType) {
       const hit = cache?.get?.(key);
       if (hit) return hit;
     } catch (error) {
-      /* 缓存不可用时只是补不到海报 */
+
     }
   }
   return null;
 }
 
-// 基线缓存里存的是 camelCase（posterPath / releaseDate），snake_case 只当回退留着
 function firstString(details, names) {
   for (const name of names) {
     const value = details?.[name];
@@ -94,7 +89,6 @@ function yearOf(details) {
   return firstString(details, ['releaseDate', 'firstAirDate', 'release_date', 'first_air_date']).slice(0, 4);
 }
 
-// 早期记录里的海报/年份是空的（字段名当时读错了），从缓存把它们补回来并落盘一次
 export function hydrateHistory() {
   if (!store) store = read();
   let changed = false;
@@ -113,8 +107,6 @@ export function hydrateHistory() {
   return store.slice();
 }
 
-// 升级前记下的记录没有海报，内存缓存也空着：这时按 TMDB 详情补一次（基线现成的 IPC，一轮最多补几条）。
-// 补不到就记住这条别再试，异常只会让这一行继续显示占位点。
 const POSTER_FETCH_LIMIT = 12;
 const attempted = new Set();
 let posterFetchInflight = false;
@@ -147,7 +139,7 @@ export function fetchMissingPosters(onDone) {
           changed = true;
         }
       } catch (error) {
-        /* 单条补不到不影响其余，也不弹任何提示 */
+
       }
     }
     posterFetchInflight = false;
@@ -164,8 +156,6 @@ function episodeLabel() {
   return active ? active.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
 }
 
-// 只读取基线 state.player（它是 openResourcePlayer 里整体替换的普通对象），
-// 用来记录"当时是哪个源、哪条线、第几集"——断点续播要靠这几个字段定位。
 function playerContext() {
   const player = deps?.state?.player;
   if (!player || !player.open) return {};

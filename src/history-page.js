@@ -1,9 +1,3 @@
-// v3.4.0 纯增量：播放历史页（体验优先）
-// 每条记录一行：海报 + 标题 + 自己的进度（迷你进度条，够短）+ 行尾"接着看/详情" + 时间 + 删除；
-// 第十二轮去掉了顶部那排"接着看"大卡（超过两条就显示不全），所有历史一律走行内两个按钮。
-// 数据来源是 history-store 的零挂钩采集；"接着看"交给 history-resume 直达播放源与进度，
-// "详情"仍走基线卡片事件委托打开介绍页。
-
 import { listHistory, removeHistory, clearHistory, restoreHistory, hydrateHistory, fetchMissingPosters } from './history-store.js';
 
 const IMAGE_BASE = 'https://image.tmdb.org/t/p';
@@ -76,7 +70,7 @@ export function createHistoryPage({ state, escapeHtml = (value) => String(value 
     const mediaType = item.mediaType === 'tv' ? 'tv' : 'movie';
     const key = `${mediaType}:${item.id}`;
     try {
-      // 只补缺，不用历史快照把缓存里已有的海报/简介覆盖成空值
+
       const cached = state?.cardMovies?.get?.(key) || {};
       const pick = (name, fallback) => (cached[name] ? cached[name] : fallback);
       state?.cardMovies?.set(key, {
@@ -95,12 +89,11 @@ export function createHistoryPage({ state, escapeHtml = (value) => String(value 
         adult: pick('adult', false),
       });
     } catch (error) {
-      /* Map 不可用时点击只是回不到介绍页 */
+
     }
     return key;
   }
 
-  // 复用基线卡片事件委托：行内挂一个不可见的 .movie-card，点击它 = 打开介绍页
   function delegateMarkup(item) {
     const key = register(item);
     return `<article class="movie-card cf3-inert" tabindex="-1" data-movie-id="${escapeHtml(String(item.id))}" data-media-type="${escapeHtml(key.split(':')[0])}" data-content-key="${escapeHtml(key)}"></article>`;
@@ -138,7 +131,6 @@ export function createHistoryPage({ state, escapeHtml = (value) => String(value 
     render(true);
   });
 
-  // "接着看"挂在行尾按钮上：走 history-resume 直达上次的源与秒数，按钮文案一定要收回来
   function bindResume(btn, item, scope) {
     btn.addEventListener('click', async (event) => {
       event.stopPropagation();
@@ -148,7 +140,7 @@ export function createHistoryPage({ state, escapeHtml = (value) => String(value 
       try {
         await resume?.resume(item, scope.querySelector('.cf3-inert'));
       } finally {
-        // 续播成功后这一页多半还在原地；卡片可能已被重绘，先确认还挂在树上
+
         if (btn.isConnected) {
           btn.disabled = false;
           btn.textContent = '接着看';
@@ -199,11 +191,11 @@ export function createHistoryPage({ state, escapeHtml = (value) => String(value 
   }
 
   function render(force) {
-    // 老记录缺海报的先按缓存补，补不到再让基线详情 IPC 慢慢补一批，补齐后自己重绘
+
     fetchMissingPosters(() => render(true));
     const items = hydrateHistory().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     const key = signature(items);
-    // 动效里最贵的就是重建这几十行 DOM：数据没变就什么都不做，切页只交给合成器
+
     if (!force && key === renderedKey && groups.firstElementChild) return;
     renderedKey = key;
     renderList(items);

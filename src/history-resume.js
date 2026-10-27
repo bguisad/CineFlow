@@ -1,10 +1,5 @@
-// v3.4.0 纯增量：断点续播（"接着看"直达具体播放源与上次进度）
-// 全部走基线已有的 DOM 契约：点行内的隐藏 .movie-card 打开介绍页 → 等 #resourceResults 轮询出资源卡 →
-// 点记录里那条线路/那一集的 [data-play-url] → 播放器就绪后把 currentTime 拨回上次看到的秒数。
-// 不改基线一行代码；任何一步失败都只是停在原地（介绍页或播放器开头），并给一条短提示。
-
 const DETAIL_WAIT_MS = 6000;
-const RESOURCE_WAIT_MS = 20000; // 资源是边轮询边追加的，给足时间
+const RESOURCE_WAIT_MS = 20000;
 const PLAYER_WAIT_MS = 15000;
 const SEEK_WAIT_MS = 25000;
 const POLL_MS = 250;
@@ -42,7 +37,6 @@ function notify(message) {
   notify.timer = window.setTimeout(() => el.classList.add('is-hidden'), 2600);
 }
 
-// 资源卡按"源名相同者优先"排序；卡内按钮再按线路名、集数标签逐级匹配，匹配不到就退回该卡第一个可播按钮
 function pickPlayButton(item) {
   const list = resourceList();
   if (!list) return null;
@@ -69,7 +63,6 @@ function pickPlayButton(item) {
   return lineHit || fallback;
 }
 
-// 播放器内的整集列表比资源卡里可见的前 12 集更全，落点不对时在这里补一次切集
 function pickEpisodeButton(item) {
   const buttons = [...document.querySelectorAll('.player-episode-button')];
   if (!buttons.length) return null;
@@ -104,14 +97,14 @@ async function seekTo(target, isCancelled) {
     if (video && playerOpen()) {
       const duration = Number(video.duration) || 0;
       if (duration > 0 && duration <= target + 2) {
-        // 这个源比上次看的短（换了线路或集数不同），不硬跳，从头播
+
         return false;
       }
       if (duration > 0 && video.readyState >= 1) {
         try {
           video.currentTime = target;
         } catch (error) {
-          /* 尚未可 seek，下一轮再试 */
+
         }
         await sleep(400);
         const now = Number(video.currentTime) || 0;

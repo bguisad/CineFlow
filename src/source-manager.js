@@ -1,11 +1,3 @@
-// v3.4.0 纯增量：设置页右侧并排同级的"片源管理"面板。
-// 列表数据就是基线 getResourceSettings() 返回的 sources（含 name/api/modes/origin），不另存一份；
-// 测速走本轮新增的 resources:testSource（主进程复用基线 buildResourceUrl + defaultSession.fetch，绕开资源缓存）；
-// 添加与删除都走基线 app:importResourceSources（它对自定义源是整体替换语义），删除=过滤后重新导入，
-// 删到空列表时改走基线 app:clearResourceSources（空数组会被导入逻辑判成无效输入）。
-// 第十三条改动：内置播放源收成一条，点开用鸿蒙气泡列名字与测速状态（不显示网址）。
-// 面板挂不进 .settings-card 就整体退回，基线设置页维持原样。
-
 const MODE_LABELS = { stable: '稳定', movie: '电影', full: '全部' };
 const TEST_ALL_CONCURRENCY = 2;
 const BUBBLE_GAP = 8;
@@ -20,8 +12,6 @@ function notify(message) {
   notify.timer = window.setTimeout(() => el.classList.add('is-hidden'), 2600);
 }
 
-// 基线用 applyResourceSettings 把主进程返回的资源设置并进 state，这里对齐同一写法：
-// 整体替换 state.resourceSettings（基线每次也是重新赋值，不是原地改字段）
 function mergeIntoState(state, next) {
   if (!state || !next) return;
   state.resourceSettings = { ...state.resourceSettings, ...next };
@@ -62,7 +52,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
   `;
   card.append(panel);
 
-  // 内置源的气泡挂在 .settings-card 上（面板自身会滚动，挂里面会被裁），观感沿用设置页那枚气泡
   const bubble = document.createElement('div');
   bubble.className = 'cf5-bubble';
   bubble.setAttribute('role', 'group');
@@ -78,7 +67,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
   const clearBtn = panel.querySelector('.cf5-clear-btn');
   const testAllBtn = panel.querySelector('.cf5-test-all');
 
-  // 测速结果只活在这一次会话里（按源标识缓存，重绘列表与开关气泡都不丢数字）
   const speeds = new Map();
   let sources = [];
   let busy = false;
@@ -97,7 +85,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
     return `<span class="cf5-latency is-bad" title="${escapeHtml(hit.error || '')}">${escapeHtml(String(hit.error || '失败').slice(0, 18))}</span>`;
   }
 
-  // 收成一条之后，行尾那枚徽章给的是"这一组"的整体结论
   function groupLatencyMarkup() {
     const list = builtinOf();
     if (!list.length) return '<span class="cf5-latency">—</span>';
@@ -151,7 +138,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
     renderBubble();
   }
 
-  // 气泡里只有名字与状态：网址太长，也不是给用户看的
   function renderBubble() {
     bubble.innerHTML = `
       <p class="cf5-bubble-title">内置播放源 · ${builtinOf().length}</p>
@@ -279,7 +265,7 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
       mergeIntoState(state, settings);
       sources = Array.isArray(settings?.sources) ? settings.sources : [];
       render();
-      // 这一句是本轮的核心修复：导入成功后输入框立刻空出来，下一次直接粘新源
+
       if (inputEl) inputEl.value = '';
       statusEl.textContent = `已导入 · 自定义 ${settings?.customSourceCount || 0} 个`;
       notify(`已导入 ${settings?.customSourceCount || 0} 个自定义源`);
@@ -291,7 +277,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
     }
   }
 
-  // 基线的导入是"整份替换自定义源"，所以增删都靠重新提交过滤后的清单
   async function submitCustom(next, message) {
     try {
       const settings = next.length
@@ -369,7 +354,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
   importBtn.addEventListener('click', importSources);
   clearBtn.addEventListener('click', clearAllGuarded);
 
-  // 点面板与气泡以外的地方才收起：面板里"全部测速 / 导入 / 删除"这些操作都要让气泡留在屏幕上
   document.addEventListener('click', (event) => {
     if (!bubbleOpen()) return;
     if (event.target instanceof Element && event.target.closest('.cf5-bubble, .cf5-sources')) return;
@@ -385,7 +369,6 @@ export function createSourceManager({ api, state, escapeHtml = (value) => String
     if (bubbleOpen()) placeBubble();
   });
 
-  // 面板不可见时别挂着无用的请求：只在设置面板打开的那一次刷新
   let opened = false;
   new MutationObserver(() => {
     const visible = !modal.classList.contains('is-hidden');

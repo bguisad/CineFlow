@@ -1,10 +1,3 @@
-/**
- * 投屏模块（v3.4.0 新增，纯增量、零依赖）。
- * - DLNA/UPnP：SSDP 多播发现 MediaRenderer，实时推送设备列表，SOAP 推送播放地址。
- * - 本机蓝牙：Windows 只读枚举（Get-PnpDevice）+ 渲染端 Web Bluetooth 实时发现回捞。
- * 全部网络/子进程调用都在 try/catch 内，失败只让投屏面板为空，不影响任何既有播放链路。
- */
-
 const dgram = require('node:dgram');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
@@ -21,11 +14,6 @@ const PROBE_MAX_ROUNDS = 4;
 const DEVICE_TTL_MS = 26000;
 const BLUETOOTH_CACHE_MS = 15000;
 
-/**
- * v3.4.0：投屏只关心"能当屏幕用"的蓝牙设备。
- * 分类只看设备名/厂商标识，其他类别（耳机、键盘、鼠标、手柄、音箱、手机...）
- * 一律标为 other，由渲染端过滤掉、不进前端列表。
- */
 const DISPLAY_KEYWORDS = [
   '无线显示器', '显示器', '投屏', '镜像', '电视', '智慧屏', '接收器', '机顶盒', '盒子',
   'miracast', 'wireless display', 'wireless monitor', 'wfd', 'cast', 'display', 'screen',
@@ -173,8 +161,8 @@ function parseSsdpHeaders(message) {
 }
 
 function createCastController({ isWin32 = process.platform === 'win32', getSender, openBluetoothSettings } = {}) {
-  const devices = new Map(); // udn -> device
-  const locationIndex = new Map(); // location -> udn
+  const devices = new Map();
+  const locationIndex = new Map();
   let socket = null;
   let probeTimer = null;
   let probeRound = 0;
@@ -186,7 +174,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
       if (!sender || sender.isDestroyed?.()) return;
       sender.send('cast:devices', snapshot());
     } catch {
-      // 窗口已关闭时忽略
+
     }
   };
 
@@ -227,7 +215,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
       devices.set(parsed.udn, { ...previous, ...parsed, discoveredAt: Date.now() });
       send();
     } catch {
-      // 单台设备描述拉取失败：忽略，不打断整体发现
+
     }
   }
 
@@ -254,7 +242,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
       try {
         socket.close();
       } catch {
-        // 忽略
+
       }
       socket = null;
     });
@@ -264,7 +252,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
           socket.setMulticastTTL(4);
           socket.addMembership(SSDP_ADDRESS);
         } catch {
-          // 部分网络禁止组播，仍可靠单播 M-SEARCH 尝试
+
         }
       });
     } catch {
@@ -290,7 +278,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
       try {
         active.send(packet, 0, packet.length, SSDP_PORT, SSDP_ADDRESS, () => {});
       } catch {
-        // 发送失败时等待下一轮
+
       }
     }
   }
@@ -356,11 +344,11 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
     try {
       await soapRequest(device.controlUrl, device.serviceType, 'Stop', { InstanceID: '0' });
     } catch {
-      // 设备可能不支持 Stop，退化为暂停
+
       try {
         await soapRequest(device.controlUrl, device.serviceType, 'Pause', { InstanceID: '0' });
       } catch {
-        // 忽略
+
       }
     }
     device.casting = false;
@@ -377,8 +365,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
       return Promise.resolve(bluetoothCache);
     }
     return new Promise((resolve) => {
-      // v3.4.0：改用 Win32_PnPEntity 取 Manufacturer，配合设备名一起判定类型；
-      // 取不到时回退到原 Get-PnpDevice 枚举，保证列表不空。
+
       const command = '[Console]::OutputEncoding=[Text.UTF8Encoding]::new();$ErrorActionPreference="SilentlyContinue";'
         + "$d = Get-CimInstance -ClassName Win32_PnPEntity -Filter 'PNPClass=\"Bluetooth\"'"
         + ' | Select-Object -First 80 Name,Manufacturer,Status;'
@@ -409,7 +396,7 @@ function createCastController({ isWin32 = process.platform === 'win32', getSende
               });
             }
           } catch {
-            // 解析失败时保留上一次结果
+
           }
         }
         found.sort((a, b) => Number(b.connected) - Number(a.connected) || a.name.localeCompare(b.name));

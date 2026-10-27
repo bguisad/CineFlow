@@ -8889,15 +8889,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
   animation: none !important;
   will-change: auto;
 }
-/* =====================================================================
-   CineFlow v3.4.0 - 投屏面板（纯增量覆盖层）
-   只作用于新增的 .cast-panel / .cast-modal-card / #playerCastBtn 元素。
-   注意：投屏卡片必须用 .cast-modal-card，基线的 .cast-card 是演员卡片，
-   重名会把演员头像放大成弹窗宽度。
-   播放器与收藏页既有样式。
-   ===================================================================== */
-
-/* ---------- 投屏弹窗：播放器之上的居中模态（播放器弹窗 z-index=92）---------- */
 .cast-panel {
   position: fixed;
   inset: 0;
@@ -8942,7 +8933,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
 }
 .cast-panel.is-open .cast-modal-card { transform: translateY(0) scale(1); }
 
-/* 关闭按钮常驻右上角（与设置弹窗同构） */
 .cast-modal-card .panel-close {
   position: absolute;
   top: 16px;
@@ -9031,13 +9021,11 @@ body.is-motion-throttled .favorites-panel .favorites-content {
 
 .cast-hint { margin-top: 16px; font-size: 12px; line-height: 1.7; color: rgba(233, 238, 255, 0.5); }
 
-/* 投屏按钮激活态 */
 #playerCastBtn.is-casting {
   border-color: rgba(var(--champagne-rgb), 0.6);
   background: rgba(var(--champagne-rgb), 0.14);
 }
 
-/* ---------- 弹窗入场水波：顶部一道高光扫过 ---------- */
 .cast-modal-card:after {
   content: "";
   position: absolute;
@@ -9064,19 +9052,12 @@ body.is-motion-throttled .favorites-panel .favorites-content {
   .cast-panel.is-rippling-open .cast-modal-card:after { animation: none !important; }
 }
 
-/* =====================================================================
-   v3.4.0 纯增量层：分类片库 / 播放历史 + 三页切换（全部 cf3- 前缀）
-   摘除办法：删 src/page-transition.js、src/incremental-pages.js、src/library-page.js、
-   src/history-page.js、src/history-store.js、src/history-resume.js，去掉 renderer.js 里 import/init 这 2 行挂钩，
-   再删掉下面这一段即可，基线样式与页面结构没有任何改动。
-   切换只用真实页面的 transform + opacity（主线程零参与），不再有快照切片。
-   ===================================================================== */
 :root {
-  --cf3-ease-expo: cubic-bezier(0.16, 1, 0.3, 1); /* 微交互（浮层、悬停）：快速起步后长长地落位 */
+  --cf3-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --cf3-ease-reveal: cubic-bezier(0.32, 0, 0.1, 1);
-  --cf3-ease-exit: cubic-bezier(0.32, 0, 0.24, 1); /* 离场：匀加速离开视野 */
-  --cf3-ease-glide: cubic-bezier(0.4, 0, 0.2, 1); /* 整页入场：两头慢、中段不停，动效全程都还在走 */
-  --cf3-ease-leave: cubic-bezier(0.4, 0, 1, 1); /* 整页离场：匀加速退场，尾巴不拖沓 */
+  --cf3-ease-exit: cubic-bezier(0.32, 0, 0.24, 1);
+  --cf3-ease-glide: cubic-bezier(0.4, 0, 0.2, 1);
+  --cf3-ease-leave: cubic-bezier(0.4, 0, 1, 1);
   --cf3-enter-ms: 360ms;
   --cf3-leave-ms: 240ms;
   --cf3-dur-open: 220ms;
@@ -9084,8 +9065,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
   --cf3-bg: #070810;
 }
 
-/* 第十轮：首页"电影/节目风格入口"整段下线（含它点出来的那片推荐位入口）。
-   只在这一层把它 display:none，index.html 与 renderer.js 一行未动——删掉本段即恢复。 */
 .content-section:has(#styleRail) {
   display: none;
 }
@@ -9094,9 +9073,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
   -webkit-app-region: no-drag;
 }
 
-/* 第九轮：整层不再声明 no-drag。标题栏是唯一拖拽区，Chromium 算拖拽区只看几何与
-   app-region、不看 pointer-events —— 任何覆盖标题栏的显式 no-drag 都会把它抠掉，
-   窗口就拖不动了。这一层从标题栏正下方开始，不声明反而更安全。 */
 .cf3-stage {
   position: absolute;
   inset: 76px 0 0 0;
@@ -9117,7 +9093,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
   pointer-events: none;
 }
 
-/* 调光幕布：切换时给首页一层"往后退"的阴影，只覆盖基线可视区，不碰基线 DOM */
 .cf3-veil {
   position: absolute;
   inset: 0;
@@ -9129,7 +9104,6 @@ body.is-motion-throttled .favorites-panel .favorites-content {
     linear-gradient(180deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.34));
 }
 
-/* 动效期间页面不可点，免得半空中点中两页之间的空隙 */
 .cf3-stage.is-switching .cf3-page,
 .cf3-stage.is-switching .cf3-page * {
   pointer-events: none !important;
@@ -9139,11 +9113,10 @@ body.cf3-switching .app-shell {
   pointer-events: none;
 }
 
-/* ---- 页面 ---- */
 .cf3-page {
   position: absolute;
   inset: 0;
-  /* 底部 Tab 栏去掉后不再预留 108px，只留一点呼吸空间 */
+
   padding: 20px 26px 28px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -9165,14 +9138,6 @@ body.cf3-switching .app-shell {
   border-radius: 999px;
 }
 
-/* ---- 切换动效：整页推入 + 同向视差，只用 transform / opacity ----
-   三页都是不透明整屏板，所以：
-   1. 入场页全程 opacity 1，只位移 —— 两页同时半透明会把密集的卡片和文字透成一片糊影，
-      还会让底下的首页在中段露出来闪一下。
-   2. 被盖住的旧页只退暗（0.6）不褪到 0，落地时它已经在新页底下，收尾直接摘掉看不见；
-      只有回首页这一路没有东西盖住它，才真的淡出。
-   3. 方向按"首页 | 分类 | 历史"从左到右排：往后翻新页从右边推入、旧页往左退，往前翻反之。
-   will-change 只在动效期间存在，静息不留常驻合成层。 */
 .cf3-page.cf3-enter,
 .cf3-page.cf3-leave {
   will-change: transform, opacity;
@@ -9202,7 +9167,6 @@ body.cf3-switching .app-shell {
   animation: cf3LeaveToRight var(--cf3-leave-ms) var(--cf3-ease-leave) both;
 }
 
-/* 幕布只在跟首页交界的那一路出现：整屏板互推时首页本来就看不见 */
 .cf3-stage.is-switching.is-home-edge .cf3-veil {
   animation: cf3Veil var(--cf3-enter-ms) var(--cf3-ease-leave) both;
 }
@@ -9296,7 +9260,6 @@ body.cf3-switching .app-shell {
   letter-spacing: -0.04em;
 }
 
-/* 页面内部的错峰淡入：只用 opacity + translateY，切换时页面自身已经在动了 */
 @keyframes cf3SubIn {
   from {
     opacity: 0;
@@ -9318,7 +9281,6 @@ body.cf3-switching .app-shell {
   animation: cf3SubIn 520ms 90ms var(--cf3-ease-reveal) both;
 }
 
-/* ---- 胶囊：媒体类型 / 排序 / 年份（参考 .chips i） ---- */
 .cf3-media,
 .cf3-sheet-row {
   display: flex;
@@ -9358,7 +9320,6 @@ body.cf3-switching .app-shell {
   transform: translateY(0) scale(0.96);
 }
 
-/* 选中态：填充胶囊（classification.png 里"全部"那一颗的做法） */
 .cf3-chip.is-on {
   color: #06231d;
   border-color: transparent;
@@ -9372,7 +9333,6 @@ body.cf3-switching .app-shell {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
 }
 
-/* ---- 分类标签：第十轮起只留分类文字，行首带"类型"标签，胶囊比排序行更紧 ---- */
 .cf3-filter {
   display: flex;
   align-items: flex-start;
@@ -9405,7 +9365,6 @@ body.cf3-switching .app-shell {
   padding: 6px 15px;
 }
 
-/* ---- 卡片网格（沿用基线 .movie-card 结构） ---- */
 .cf3-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -9428,9 +9387,6 @@ body.cf3-switching .app-shell {
   margin-top: 18px;
 }
 
-/* 加载占位改用基线首页那套 .movie-card.skeleton，shimmer 与尺寸都跟着首页走，不再自造骨架。 */
-
-/* ---- 悬浮排序/年份按钮与浮层（底部 Tab 栏去掉后贴回页面下沿） ---- */
 .cf3-fab {
   position: fixed;
   right: 30px;
@@ -9479,7 +9435,6 @@ body.cf3-switching .app-shell {
   box-shadow: 0 0 0 3px rgba(var(--champagne-rgb), 0.14), 0 16px 40px rgba(0, 0, 0, 0.42);
 }
 
-/* 第十三条：一键回到顶部——贴在"热度"那颗下方，离开顶部才浮出，回到顶部就收回 */
 .cf3-totop {
   position: fixed;
   right: 30px;
@@ -9540,7 +9495,6 @@ body.cf3-switching .app-shell {
   transform: scale(0.94);
 }
 
-/* 浮出时把"热度"与它的排序面板一起抬高一档，两枚按钮不重叠 */
 .cf3-library.is-scrolled .cf3-fab {
   transform: translateY(-58px);
 }
@@ -9597,9 +9551,6 @@ body.cf3-switching .app-shell {
   color: var(--dim);
 }
 
-/* ---- 播放历史 ---- */
-/* 第十二轮：顶部那排"接着看"大卡整块下线（超过两条就显示不全），
-   两个按钮改挂到每条记录的行尾，进度条随之缩短给按钮让位 */
 .cf3-row-actions {
   display: flex;
   align-items: center;
@@ -9623,7 +9574,6 @@ body.cf3-switching .app-shell {
   color: var(--text);
 }
 
-/* 进度条缩短：行尾要多出两颗按钮，窄屏下先让按钮站稳 */
 .cf3-row .cf3-progress {
   width: min(168px, 100%);
 }
@@ -9782,7 +9732,6 @@ body.cf3-switching .app-shell {
   display: none;
 }
 
-/* 复用基线卡片事件委托的隐形代理：只被程序 click，不参与视觉 */
 .cf3-inert {
   position: absolute;
   width: 0;
@@ -9797,7 +9746,6 @@ body.cf3-switching .app-shell {
   transform: none;
 }
 
-/* 灵动岛三种形态里窗口太窄，整层收起 */
 body.island-mode .cf3-stage,
 body.island-expanded-mode .cf3-stage,
 body.island-docked-mode .cf3-stage {
@@ -9832,13 +9780,6 @@ body.island-docked-mode .cf3-stage {
   }
 }
 
-/* =====================================================================
-   v3.4.0 第十一轮纯增量：设置页第一栏收进标题右侧的微型按钮气泡（cf4- 前缀）
-   基线 index.html / renderer.js 一行未动：#settingsState 这个活节点被 JS 整体搬进
-   .cf4-bubble，基线继续往它 innerHTML 写状态，气泡里显示的就是最新内容。
-   摘除办法：删 src/incremental-settings.js + incremental-pages.js 里的 2 行，再删掉下面这一段，
-   设置页立刻回到基线形态（第一栏重新出现在滚动区顶部）。
-   ===================================================================== */
 #settingsTitle {
   display: flex;
   align-items: center;
@@ -9886,8 +9827,6 @@ body.island-docked-mode .cf3-stage {
   border-color: rgba(var(--accent-rgb), 0.5);
 }
 
-/* HarmonyOS 式气泡：半透明磨砂 + 大圆角 + 指向按钮的小箭头，
-   展开用轻微回弹的缩放落位，收起只是缩回去，不会把卡片其他行挤动（整层是 absolute） */
 .cf4-bubble {
   position: absolute;
   z-index: 3;
@@ -9936,7 +9875,6 @@ body.island-docked-mode .cf3-stage {
   background: rgba(24, 27, 43, 0.88);
 }
 
-/* 搬进气泡后不再需要基线那层"框中框"：外边距、边框、底色都交给气泡本身 */
 .cf4-bubble .settings-state {
   margin: 0;
   padding: 0;
@@ -9950,16 +9888,6 @@ body.island-docked-mode .cf3-stage {
   font-weight: 600;
 }
 
-/* =====================================================================
-   v3.4.0 第十二轮纯增量（cf5- 前缀）：设置页两栏 + 片源管理面板、
-   历史页行内"接着看/详情"、详情页只留"加入偏好"。
-   摘除办法：删掉本段 + src/source-manager.js 与 incremental-settings.js 里的
-   simplifySettings()，设置页回到单栏基线形态、"介绍页资源查找"下拉与外部源导入栏重新出现。
-   本段只用 :has() 给 .settings-card 换布局，基线规则一条都没改。
-   ===================================================================== */
-
-/* 资源查找策略从第十二轮起固定为"全部来源"，控件与标签只是不再展示；
-   基线那套"自定义外部源导入"（粘完会被状态回填、清不掉）由片源管理面板接管 */
 .settings-card label[for='resourceModeSelect'],
 .settings-card #resourceModeSelect,
 .settings-card label[for='resourceSourceInput'],
@@ -9968,12 +9896,10 @@ body.island-docked-mode .cf3-stage {
   display: none !important;
 }
 
-/* 两颗按钮做的是同一件事（"加入偏好"内部同样会 rememberFavorite），只留"加入偏好" */
 #detailPanel #detailFavoriteBtn {
   display: none !important;
 }
 
-/* 两栏只在片源管理面板真的挂上时才成立：装配失败就是原来的单栏设置页 */
 .settings-card:has(.cf5-sources) {
   display: grid;
   grid-template-columns: minmax(310px, 1fr) minmax(340px, 1.06fr);
@@ -10006,7 +9932,6 @@ body.island-docked-mode .cf3-stage {
   grid-area: 3 / 2;
 }
 
-/* ---- 片源管理面板 ---- */
 .cf5-sources {
   display: flex;
   flex-direction: column;
@@ -10070,7 +9995,7 @@ body.island-docked-mode .cf3-stage {
   flex-direction: column;
   gap: 6px;
   min-height: 96px;
-  /* 面板自己滚动：列表不许被 flex 压扁，否则行会溢出到导入框上面 */
+
   flex: 0 0 auto;
 }
 
@@ -10197,7 +10122,6 @@ body.island-docked-mode .cf3-stage {
   font-size: 12px;
 }
 
-/* 窄窗口先回到单栏，片源管理整块跟在设置项下面 */
 @media (max-width: 900px) {  .settings-card:has(.cf5-sources) {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -10217,7 +10141,6 @@ body.island-docked-mode .cf3-stage {
   }
 }
 
-/* 第十三条：内置播放源收成一条（不显示网址），点开用鸿蒙气泡列名字与测速状态 */
 .cf5-group {
   cursor: pointer;
 }
@@ -10250,7 +10173,7 @@ body.island-docked-mode .cf3-stage {
 }
 
 .cf5-group .cf5-latency {
-  /* 整组结论那枚徽章不许截断（"最快 405 ms · 1 无响应"） */
+
   max-width: none;
   white-space: nowrap;
 }
@@ -10352,13 +10275,6 @@ body.island-docked-mode .cf3-stage {
   }
 }
 
-/* =====================================================================
-   v3.4.2 纯增量层：TMDB 应用内一键凭证向导（全部 cf6- 前缀，单行紧凑版）
-   摘除办法：删 src/tmdb-wizard.js、electron/tmdb-auth.cjs，去掉 incremental-pages.js 里
-   import/init 这 2 行挂钩、main.cjs 末尾的 tmdbAuth 段与 preload 的 4 行 API，
-   再删掉下面这一段即可，基线样式与页面结构没有任何改动。
-   刻意不声明 app-region：拖拽区仍归基线标题栏。
-   ===================================================================== */
 label[for="apiCredentialInput"],
 #apiCredentialInput {
   display: none !important;
@@ -10391,7 +10307,6 @@ label[for="apiCredentialInput"],
   transition: color 240ms var(--cf3-ease-expo), text-shadow 240ms var(--cf3-ease-expo);
 }
 
-/* 凭证到手后"TMDB 凭证"整块高亮：颜色 + 光晕 + 前置对勾，一眼能看出已经好了 */
 .cf6-auth.is-ready .cf6-auth-title {
   color: var(--cf6-accent);
   text-shadow: 0 0 16px rgba(158, 142, 255, 0.5);
@@ -10477,7 +10392,6 @@ label[for="apiCredentialInput"],
   border-color: rgba(158, 142, 255, 0.34);
 }
 
-/* 进行中只多出一行：转圈 + 五段进度轨 + 一句话 + 取消 */
 .cf6-auth-run {
   display: flex;
   align-items: center;
@@ -10583,7 +10497,6 @@ label[for="apiCredentialInput"],
   to { opacity: 1; transform: none; }
 }
 
-/* 窄窗（<900px 时设置卡退回单栏）下按钮换行，不挤压标题 */
 @media (max-width: 900px) {
   .cf6-auth-main {
     flex-wrap: wrap;
@@ -10605,14 +10518,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* =====================================================================
-   v3.4.2 纯增量层：首页搜索框的搜索记录弹窗（全部 cf7- 前缀）
-   玻璃质感复用收藏页那套配方（rgba(5,7,16,.82) + blur(16px) saturate(1.08)
-   + 多层内高光阴影 + 9px 旋转小箭头）。
-   摘除办法：删 src/search-history.js 与 incremental-pages.js 里那 2 行挂钩，
-   再删掉下面这一段即可，基线样式与页面结构没有任何改动。
-   刻意不声明 app-region：拖拽区只归基线 .titlebar。
-   ===================================================================== */
 .cf7-history {
   position: absolute;
   z-index: 31;
@@ -10652,7 +10557,6 @@ label[for="apiCredentialInput"],
     visibility 0s;
 }
 
-/* 朝上的小箭头，指着搜索框中心 */
 .cf7-history::before {
   content: "";
   position: absolute;
@@ -10783,9 +10687,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* ================= v3.4.2 第十八轮：豆瓣兜底（cf8，纯增量追加） =================
-   只覆盖新增的 .cf8-* 节点：无 TMDB 凭证时的首页豆瓣片单、豆瓣资料卡、海报淡入。
-   不声明任何 app-region（拖拽区仍只归 .titlebar）。 */
 .cf8-rail{display:flex;flex-direction:column;gap:12px;padding:2px 0 4px;width:100%}
 .cf8-rail-head{display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.02em;color:rgba(233,236,255,.62)}
 .cf8-badge{padding:2px 8px;border-radius:999px;font-size:11px;line-height:16px;color:#c8ffdc;background:rgba(46,196,113,.14);border:1px solid rgba(46,196,113,.28)}
@@ -10817,11 +10718,6 @@ label[for="apiCredentialInput"],
 .cf8-sheet-note{margin-top:auto;opacity:.55}
 @media (max-width:720px){.cf8-sheet-card{flex-direction:column;max-height:82vh}.cf8-sheet-poster{flex-basis:auto;width:120px}}
 
-/* ================= v3.4.2 第十九轮：搜索记录改用设置页鸿蒙气泡 + 标签云（cf9，纯增量追加） =================
-   气泡配方逐值复用设置页的 .cf4-bubble：rgba(24,27,43,.88) + blur(18px) saturate(1.5)
-   + 18px 大圆角 + 1px 半透明描边 + 20/44 投影 + 9px 旋转 45° 小箭头。
-   词条区改成 flex-wrap 的气泡云（参考博客标签云/词云通行做法：字号、字重、亮度随权重分级，
-   用换行流而不是绝对定位，避免重叠与不可选中）；删除图标只在悬浮/键盘聚焦时出现。 */
 .cf7-history {
   padding: 10px 10px 9px;
   border: 1px solid rgba(255, 255, 255, 0.13);
@@ -10860,7 +10756,6 @@ label[for="apiCredentialInput"],
   color: rgba(255, 255, 255, 0.82);
 }
 
-/* 词云：换行流 + 居中，词条宽度自适应 */
 .cf7-history-list {
   display: flex;
   flex-direction: row;
@@ -10913,7 +10808,6 @@ label[for="apiCredentialInput"],
   text-overflow: clip;
 }
 
-/* 悬浮才出现的删除角标：绝对定位在右上角，不占词条宽度 */
 .cf7-history-del {
   position: absolute;
   top: -6px;
@@ -10947,7 +10841,6 @@ label[for="apiCredentialInput"],
   color: #fff;
 }
 
-/* 触屏没有 hover：角标常驻，避免删不掉 */
 @media (hover: none) {
   .cf7-history-del {
     opacity: 1;
@@ -10970,10 +10863,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* ================= v3.4.2 第二十轮：搜索记录词条去掉胶囊、改纯文字（cf10，纯增量追加） =================
-   气泡本体仍是 cf9 复用设置页 .cf4-bubble 的那套；这里只把词条从"胶囊"改成纯文字：
-   无底色、无描边、无圆角，只保留点击热区；颜色由词条哈希给色相（同词同色），
-   点击次数越多越亮越饱和，字号/字重仍按 hits 分级。删除角标照旧只在悬浮/聚焦时出现。 */
 .cf7-history-list {
   gap: 9px 16px;
   padding: 4px 4px 6px;
@@ -11006,7 +10895,6 @@ label[for="apiCredentialInput"],
   border-radius: 6px;
 }
 
-/* 纯文字后角标贴近文字右上角；仍是悬浮才出现 */
 .cf7-history-del {
   top: -7px;
   right: -10px;
@@ -11018,11 +10906,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* ================= v3.4.2 第二十一轮：删除角标不被"搜索记录"头层挡住（cf11，纯增量追加） =================
-   角标是绝对定位在词条右上角、向外探出 8~11px 的，而词条列表本身是滚动容器
-   （overflow-y:auto 会让 overflow-x 也变成 auto），所以第一行/最右侧的角标会被裁掉；
-   头部"搜索记录"又在同一层叠上下文里先绘制。这里给列表留出内边距让角标落在容器内，
-   并用层级保证悬浮那条永远盖在兄弟节点与头部之上。 */
 .cf7-history-head {
   position: relative;
   z-index: 1;
@@ -11047,12 +10930,6 @@ label[for="apiCredentialInput"],
   z-index: 7;
 }
 
-/* =====================================================================
-   v3.4.2 第二十二轮纯增量层：TMDB 一键获取改弹鸿蒙气泡（cf12-，纯追加）
-   卡片那一行只留「一键获取」，进度轨/状态/取消全部搬进气泡；
-   气泡外壳复用设置页 cf4 那套磨砂配方，内部继续吃 cf6 的按钮与进度轨样式。
-   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
-   ===================================================================== */
 .cf12-bubble {
   position: absolute;
   z-index: 45;
@@ -11183,26 +11060,11 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* =====================================================================
-   v3.4.2 第二十三轮纯增量层：三页之间每一路切换都跑同一套过渡（cf13-，纯追加）
-   实测根因：切进一个"从没画过的整屏板"时，合成器要临场建层 + 整页栅格化，
-   动效头 240~380ms 全被这件事吃掉（同步 JS 只花 0~14ms、零长任务），
-   观感就是"只有跟首页交界那两路有动效，分类↔历史像直接切页"。
-   做法：挂载即常驻提层（cf3-warm）+ 空闲时把隐藏页露 1.2% 逼一次栅格化，
-   并且入场页先画一帧再挂动画类。cf3 原有键帧一个字没改。
-   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
-   ===================================================================== */
 .cf3-page.cf3-warm {
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
 
-/* =====================================================================
-   v3.4.2 第二十四轮纯增量层：TMDB 申请草稿 + 逐条一键复制（cf14-，纯追加）
-   草稿只产出文本与"打开官方申请页"，应用不加载、不注入、不代填第三方页面：
-   条款勾选 / 提交 / CAPTCHA / 邮箱验证一律由用户本人在浏览器里完成。
-   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
-   ===================================================================== */
 .cf12-draft {
   margin-top: 9px;
   padding-top: 8px;
@@ -11307,7 +11169,6 @@ label[for="apiCredentialInput"],
   background: rgba(158, 142, 255, 0.16);
 }
 
-/* execCommand 兜底用的一次性文本域：留在可视区外，别把页面顶出滚动条 */
 .cf12-copy-shim {
   position: fixed;
   top: -200vh;
@@ -11316,12 +11177,6 @@ label[for="apiCredentialInput"],
   pointer-events: none;
 }
 
-/* =====================================================================
-   v3.4.2 第二十五轮纯增量层：申请草稿改成可编辑表单，字段严格照 API_4.png（cf15-，纯追加）
-   联系方式是用户本人身份资料：一律留空由用户自己敲，只存本机 localStorage，
-   应用不收集、不上传，也不代填第三方页面 —— 条款勾选与 Subscribe 仍由本人点。
-   刻意不声明 app-region：拖拽区仍只归基线 .titlebar。
-   ===================================================================== */
 .cf14-group + .cf14-group {
   margin-top: 9px;
   padding-top: 7px;
@@ -11388,7 +11243,6 @@ label[for="apiCredentialInput"],
   color: #55607a;
 }
 
-/* 草稿展开后最高就到这块，内部滚动：不然 14 个字段会把气泡顶到窗口外（实测 527px 越界） */
 .cf12-bubble .cf12-draft-rows {
   max-height: 246px;
   overflow-y: auto;
@@ -11407,11 +11261,6 @@ label[for="apiCredentialInput"],
   border-radius: 999px;
 }
 
-/* =====================================================================
-   v3.4.3 第二十五轮纯增量层：every.film 来源署名（cf16-，纯追加）
-   该站《API 使用条款》要求"以与展示载体相称的方式注明数据来源并附回链"，
-   所以在资料卡里放一行可见署名 + 可点开的回链。数据许可 CC-BY-SA 4.0。
-   ===================================================================== */
 .cf16-sheet-credit {
   display: flex;
   align-items: center;
@@ -11443,13 +11292,6 @@ label[for="apiCredentialInput"],
   background: rgba(158, 142, 255, 0.18);
 }
 
-/* =====================================================================
-   v3.4.3 第二十六轮纯增量层：兜底片单直接复用基线卡片结构（cf17-，纯追加）
-   .movie-rail 是 grid-auto-flow:column / grid-auto-columns:178px 的网格，
-   上一版把整条豆瓣片单塞进一个 .cf8-rail 包装 div 里 = 只占一个网格列，
-   于是"海报全挤在左边"。现在卡片直接是 .movie-card 网格子项，尺寸自动一致；
-   这里只补两件事：占位文字让位给真海报、兜底图片铺满 poster-frame。
-   ===================================================================== */
 .poster-frame img.cf8-poster-loaded {
   position: absolute;
   inset: 0;
@@ -11460,20 +11302,10 @@ label[for="apiCredentialInput"],
   display: none;
 }
 
-/* 兜底卡片与首页卡片同尺寸后，hover 由基线 .movie-card 负责，不再叠一层位移 */
 .movie-card[data-cf8-douban]:hover .cf8-poster-loaded {
   transform: none;
 }
 
-/* =====================================================================
-   v3.4.3 第二十七轮纯增量层：分类片库的滚动容器下沉（cf18-，纯追加）
-   第二十三轮给 .cf3-page 常驻了 will-change: transform（cf3-warm，为了切页不掉帧），
-   副作用是这一页成了 position:fixed 后代的包含块 —— "热度"与"回到顶部"两枚固定按钮
-   被算进滚动内容里，滚一下就跟着往上跑。
-   这里把滚动从 .cf3-page 挪到内层 .cf3-scroll：页面本身不滚动，覆盖层的包含块就等于页面框，
-   位置恒定；切页时页面整体位移，按钮跟着页面一起进、一起出，观感也更合理。
-   摘除办法：删掉这一段 + src/library-page.js 里的 .cf3-scroll 一层，即回到上一版。
-   ===================================================================== */
 .cf3-page.cf3-library {
   overflow: hidden;
   padding: 0;
@@ -11499,15 +11331,6 @@ label[for="apiCredentialInput"],
   border-radius: 999px;
 }
 
-/* =====================================================================
-   v3.4.3 第三十轮纯增量层：搜索框只留一个叉号（cf19-，纯追加）
-   #globalSearch 是 type="search"，Chromium 会在输入框右端画一个原生
-   ::-webkit-search-cancel-button；基线自己又有一个 #clearSearchBtn（×），
-   于是输入内容后并排出现两个叉号（真包截图实测：原生那个在 x≈846、基线那个在 x=864）。
-   原生叉号活在 UA shadow DOM 里，querySelectorAll 看不见、JS 也删不掉，只能用 CSS 关掉。
-   基线 index.html / renderer.js 一字未动，保留的正是基线那颗带样式、带 title 的叉号。
-   摘除办法：删掉下面这一段即回到上一版。
-   ===================================================================== */
 #globalSearch::-webkit-search-cancel-button,
 #globalSearch::-webkit-search-decoration,
 #globalSearch::-webkit-search-results-button,
@@ -11520,15 +11343,6 @@ label[for="apiCredentialInput"],
   margin: 0 !important;
 }
 
-/* =====================================================================
-   v3.4.3 第三十一轮纯增量层（cf20- / cf21-，纯追加）
-   cf20：TMDB 申请草稿的"联系方式"整组去掉复制按钮后，行网格从三列收成两列
-         （否则第三列 auto 会留下一条 8px 空隙）。开发者计划那一组照旧带复制。
-   cf21：无凭证豆瓣摘要卡下面那一条可播线路（应用内置的如意资源）。
-         刻意不声明任何 app-region：拖拽区仍归基线标题栏。
-   摘除办法：删掉这两段 + src/douban-fallback.js 里 cf21- 相关函数 +
-             main.cjs 末尾的 douban:playSource 段 + preload 末尾那一个 expose，即回到上一版。
-   ===================================================================== */
 .cf12-row.cf20-nocopy {
   grid-template-columns: 50px minmax(0, 1fr);
 }
@@ -11663,19 +11477,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* =====================================================================
-   v3.4.3 第三十三轮纯增量层：设置页两栏被外部源撑坏的修复（cf22-，纯追加）
-   两个真问题（第三十二轮那版 cf5 布局遗留）：
-   ① 两栏时左栏 .settings-scroll 是 display:grid，网格行默认会被"拉满整行高度"，
-      而第 3 行的高度由右栏（片源面板）决定 —— 导入多条源后右栏变高，左栏的
-      代理输入框 / 两个下拉就被纵向拉长到 72px 以上，观感就是"基础设置被撑大"。
-      修法：align-content:start，让左栏各行保持自然高度、整体靠上。
-   ② ≤900px 自动变单栏时，两段各自还留着 max-height:calc(100vh - 230px) 并且
-      .settings-card 是 overflow:hidden —— 两段叠起来 900px+ 而卡片只有 560px，
-      底部（最后几行源 / 底部按钮）直接被裁掉。修法：单栏时两段都放开高度、
-      改由卡片自己滚动，关闭按钮 sticky 住别滚跑。
-   只覆盖 cf5 那套布局，基线规则一条未改；摘掉本段即回到上一版。
-   ===================================================================== */
 .settings-card:has(.cf5-sources) > .settings-scroll {
   align-content: start;
 }
@@ -11717,13 +11518,6 @@ label[for="apiCredentialInput"],
   }
 }
 
-/* =====================================================================
-   v3.4.4 第三十四轮纯增量层：CF 图标更新检查气泡（cf23-，纯追加）
-   CF 图标在基线的 .brand.drag-region 里，要能点就必须给自己声明 no-drag ——
-   只抠出这 42×42 一小块，标题栏其余部分仍然可拖（基线 .titlebar / .brand 的
-   drag 规则一条未改）。气泡挂在 #app 上、不声明任何 app-region。
-   摘除办法：删掉本段 + src/update-bubble.js + incremental-pages.js 两行挂钩即回退。
-   ===================================================================== */
 .brand-mark {
   position: relative;
   cursor: pointer;
@@ -11748,7 +11542,6 @@ label[for="apiCredentialInput"],
   outline-offset: 3px;
 }
 
-/* 有新版时图标右上角一颗小圆点 */
 .brand-mark.cf23-has-update::after {
   content: '';
   position: absolute;
@@ -11785,7 +11578,7 @@ label[for="apiCredentialInput"],
   transform: scale(0.86) translateY(-8px);
   transform-origin: var(--cf23-caret-x, 40px) -8px;
   pointer-events: none;
-  /* 进出场与 cf12 鸿蒙气泡完全同一套：进场 reveal，退场按 cf3-dur-close 淡出 + visibility 延时 */
+
   transition:
     opacity var(--cf3-dur-close) var(--cf3-ease-exit),
     transform var(--cf3-dur-open) cubic-bezier(0.34, 1.4, 0.5, 1),
@@ -11892,8 +11685,6 @@ label[for="apiCredentialInput"],
   font-size: 11.5px;
 }
 
-/* "稍后"只留文字：不画边框、不铺底，和气泡里的主按钮不再抢视觉。
-   注意基线 .ghost-button 是 display:grid + width/height:42px 的方形按钮，必须显式改回 auto。 */
 .cf23-actions .cf23-later {
   flex: 0 0 auto;
   display: inline-flex;

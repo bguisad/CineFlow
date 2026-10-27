@@ -1,25 +1,5 @@
-/**
- * v3.4.2 纯增量：双路搜索（片名关键词 / 心情·天气自然语言）。
- *
- * 问题：基线 extractPromptIntent（renderer.js:1816）用**子串**匹配意图词，
- * 于是《爱情公寓》命中「爱情」被当成"恋爱约会"氛围搜索、《甜蜜蜜》命中「甜」……标题被降级成氛围推荐。
- *
- * 做法：先判片名，再决定走哪条路。分类在渲染端完成，不改基线任何一行：
- *   ① 只在查询命中意图词（或有书名号）时才接管；普通片名搜索完全不受影响；
- *   ② 先剥填充词抽"片名候选"（我想看一部爱情公寓 → 爱情公寓），再用本机字典（首页/搜索结果渲染过的
- *      片名 + 收藏 + 播放历史）做**零网络往返**的即时判定；字典没命中才发一次 TMDB 关键词核对；
- *   ③ 判定为片名 → 把候选里的意图词用零宽分隔符（U+200B）拆开交给基线走纯文本搜索
- *      （实测：爱情公寓 / 爱情公寓 结果条数与前三名完全一致），再把片名强匹配提到队首；
- *   ④ 判定不通过（真的是"下雨天想看的电影"这类描述）→ 原样交还基线走氛围推荐；
- *      像一句话的查询**先按氛围秒出结果**，之后异步核对到片名再纠正，氛围路径不再为核对买单；
- *   ⑤ 打字停顿触发的防抖搜索也能纠正：若结果里出现片名强匹配，就把它们提到队首并把标题改回"相关推荐"。
- *
- * 整句全是氛围词（"科幻未来"、"悬疑推理"）永远按氛围走，避免把类型词当片名。
- * 任何一步异常都只是退回基线原有行为。
- */
 import { EXTRA_PROMPT_INTENTS } from './intent-extras.js';
 
-// 与 renderer.js 的 PROMPT_INTENTS 保持一份镜像（只用于"是否值得核对"，不参与最终检索）
 const BASE_PATTERNS = [
   '放松', '轻松', '解压', '开心', '治愈', '暖心', '舒服', '周末', '窝在家', '下饭', '吃饭', '快乐', '无脑', '舒服点', '喜剧', '搞笑', '幽默',
   '一个人', '独处', '孤独', '安静', '自我', '内心', '人生', 'emo', '低落', '失落', '发呆', '文艺', '剧情',
@@ -39,8 +19,6 @@ const INTENT_WORDS = [...new Set([
   ...EXTRA_PROMPT_INTENTS.flatMap((intent) => intent.patterns || [])
 ])].filter(Boolean).sort((a, b) => b.length - a.length);
 
-// 只在查询开头/结尾出现的口语填充词：剥掉它们才能把"我想看一部《毛骗》"认成片名查询。
-// 长词排在前面，先剥整词再剥单词，避免"想看"被拆成"想"+"看"后剩下的字把片名咬掉。
 const LEAD_FILLERS = [
   '帮忙推荐一部', '帮我推荐一部', '给我推荐一部', '有没有什么', '有没有', '有木有', '帮我推荐', '给我推荐',
   '我想看一部', '我要看一部', '想找一部', '想看一部', '推荐一部', '求推荐一部', '安利一部', '找一部', '来一部', '求一部', '看一部',
@@ -69,7 +47,7 @@ let lastEnterAt = 0;
 let lastInputAt = 0;
 let pending = false;
 let dictAt = 0;
-const dict = new Map(); // normalizeTitle 后的键 → 展示用片名
+const dict = new Map();
 
 function stripInvisible(value) {
   return String(value || '').replace(/[\u200b-\u200d\ufeff]/g, '');
@@ -122,7 +100,6 @@ function strongTitleHit(results, query) {
   return null;
 }
 
-// 意图词整词拆成"字 + 零宽符 + 字"，基线 includes 不再命中，TMDB 检索不受影响
 function sanitizeForIntent(text, words) {
   let output = String(text || '');
   for (const word of words) {
@@ -133,8 +110,6 @@ function sanitizeForIntent(text, words) {
   return output;
 }
 
-// 去掉命中的意图词和"天气/助词"类填充字后，还剩多少"片名实体字"：
-// 爱情公寓 → 公寓(2) → 片名；下雨天 → 天(填充) → 0 → 仍按氛围；恐怖直播 → 直播(2) → 片名
 function meaningfulRemainder(query, words) {
   let text = clean(query);
   for (const word of words) {
@@ -145,7 +120,6 @@ function meaningfulRemainder(query, words) {
   return text.replace(/[天空日雨雪风夜晚早晨午间时候点些部个的了想找看要推荐适合吗呢吧呀啊我你他她它们来去]/g, '').trim();
 }
 
-// 整句都是氛围词（"科幻未来"、"悬疑推理"）→ 一律按氛围，绝不升级为片名
 function isPureIntent(query) {
   const text = normalizeTitle(query);
   if (!text) return true;
@@ -157,7 +131,6 @@ function isPureIntent(query) {
   return rest.replace(FILLER_CHARS, '').length === 0;
 }
 
-// 剥掉首尾填充词，抽出"像是片名"的那一段：只从两端往里收，绝不动中间
 function extractCandidate(value) {
   let text = clean(value);
   if (!text) return '';
@@ -197,12 +170,12 @@ function readStoredTitles() {
   try {
     const prefs = JSON.parse(window.localStorage.getItem('cineflow:prefs') || '{}');
     for (const item of prefs.favorites || []) addTitle(item?.title || item?.name);
-    for (const term of prefs.recentSearches || []) void term; // 输入轨迹，不是片名，故意不进字典
-  } catch { /* 存储不可用就只靠 DOM 那份 */ }
+    for (const term of prefs.recentSearches || []) void term;
+  } catch {   }
   try {
     const history = JSON.parse(window.localStorage.getItem('cineflow:history:v3') || '[]');
     for (const item of Array.isArray(history) ? history : []) addTitle(item?.title || item?.name);
-  } catch { /* 同上 */ }
+  } catch {   }
 }
 
 function refreshDict(force) {
@@ -213,7 +186,6 @@ function refreshDict(force) {
   readStoredTitles();
 }
 
-// 本机字典命中 = 用户已经见过这部片子，直接判片名，省掉一次 TMDB 往返
 function findLocal(query) {
   const key = normalizeTitle(query);
   if (!key || key.length < 2 || isPureIntent(query)) return null;
@@ -278,7 +250,6 @@ function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-// 等搜索轨道"真的落地"：骨架屏还在就说明那次检索没结束，别急着盖上去
 function railPending() {
   const rail = document.querySelector('#searchRail');
   if (!rail) return false;
@@ -322,7 +293,6 @@ function waitRailSettled() {
   });
 }
 
-// 像一句话（而不是片名）的：带祈使词/助词/空格且够长 —— 不必等片名核对，立刻交还基线
 function looksLikeSentence(value) {
   const text = clean(value);
   if (text.length < 8) return false;
@@ -338,7 +308,6 @@ function titleCheck(text, words, quoted) {
     .catch(() => null);
 }
 
-// 片名路线：让上一次（防抖或氛围）检索先落地，再交 sanitized 候选，保证这次是最后一次写入
 async function titlePath(text, words) {
   const watched = clean(document.querySelector('#globalSearch')?.value);
   if (Date.now() - lastInputAt < 500) await sleep(420);
@@ -357,7 +326,6 @@ async function titlePath(text, words) {
   reapplyPromotion(text, watched, Date.now() + 3600);
 }
 
-// 用户在我们等结果的这段时间里又搜了别的：绝不把旧查询的标题/结果盖到新查询上
 function stillCurrent(watched) {
   return clean(document.querySelector('#globalSearch')?.value) === watched;
 }
@@ -370,7 +338,7 @@ function decide(raw) {
   const words = matchedIntentWords(candidate);
   if (quoted) return { text: candidate, words, titleMode: true };
   if (findLocal(candidate)) return { text: candidate, words, titleMode: true };
-  // 只是被口语包了一层、里面又没有氛围词 → 这段候选基本就是片名，不必再等一次网络核对
+
   if (candidate && candidate !== stripped && !words.length && !isPureIntent(candidate)) {
     return { text: candidate, words: [], titleMode: true };
   }
@@ -390,7 +358,7 @@ async function handleEnter(input) {
     plan = null;
   }
   if (!plan) { replay(raw); return; }
-  // 氛围优先：一句话查询先按基线原有方式出结果，核对到片名再纠正，氛围路径不背网络债
+
   if (plan.moodFirst) {
     replay(raw);
     if (plan.titleMode) await titlePath(plan.text, plan.words);
@@ -406,7 +374,7 @@ function reapplyPromotion(query, watched, until) {
     const input = document.querySelector('#globalSearch');
     if (clean(input?.value) !== watched) return;
     const title = document.querySelector('#searchTitle')?.textContent || '';
-    // 只接手"氛围推荐"被覆盖回来、或我们自己的"相关推荐"又被基线重画这两种情况
+
     if (!title.includes('氛围推荐') && !title.includes('相关推荐')) return;
     const hits = promote(query);
     if (hits) relabel(query, hits);
@@ -434,8 +402,7 @@ function mountDualSearch() {
     if (!raw) return;
     const stripped = unquote(raw);
     const candidate = extractCandidate(stripped);
-    // 命中意图词、带书名号，或者外面裹了一层口语填充词（"我想看寄生虫"）——都值得接管；
-    // 只有"裸片名"（候选和原话一样）才零成本放行给基线。
+
     const worthIntercept = matchedIntentWords(raw).length > 0 || hasBookQuote(raw) || (candidate && candidate !== stripped);
     if (!worthIntercept) return;
     event.preventDefault();
@@ -445,7 +412,6 @@ function mountDualSearch() {
     handleEnter(input).catch(() => {}).finally(() => { pending = false; });
   }, true);
 
-  // 防抖搜索（打字停顿）路径：只做"片名提权 + 改标题"，不动非片名结果
   let lastRailSignature = '';
   let lastEmptyReplay = '';
   const observer = new MutationObserver(() => {
@@ -468,7 +434,7 @@ function mountDualSearch() {
         if (hits) relabel(candidate, hits);
         return;
       }
-      // 一句话直接搜出 0 结果：把剥掉填充词的候选再搜一次，比空列表有用
+
       if (!wrapped || isPureIntent(candidate) || railCards().length) return;
       if (lastEmptyReplay === candidate) return;
       lastEmptyReplay = candidate;

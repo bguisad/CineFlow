@@ -1,32 +1,14 @@
-/**
- * v3.4.3 纯增量：every.film 开放元数据（无 TMDB 凭证时的海报 / 身份解析兜底）。
- *
- * 逆向结论（实测，见 CINEFLOW_CONTEXT.md 第二十五轮）：
- *   GET /api/v1/search?q=      → { query, counts, results:{ media[], people[] } }，匿名可读
- *   GET /api/v1/media/{uuid}   → { titles[]（含中文别名）, mappings[]（tmdb/imdb/douban 外部 id + 各自评分）}
- *   GET /api/v1/img/media/…    → 海报，直连 200，不需要 Referer（比豆瓣图片省事）
- *   GET /3/…                   → TMDB 兼容接口，但**要审批过的密钥**（无 key 直接 401），所以不能当 TMDB 替身
- *   没有 简介 / 类型 / 演职员 端点 → 这几项仍然只能靠豆瓣或 TMDB，本模块不负责。
- *
- * 遵守该站《API 使用条款》（https://every.film/zh-CN/api-terms-of-use）：
- *   读取无需密钥；署名 every.film 且给回链（渲染层负责显示）；
- *   匿名读有速率限制 → 这里做单道闸串行 + 最小间隔 + 429 时按 Retry-After 退避 + 结果长缓存；
- *   不高并发、不分摊绕限、不抓 HTML 代替 API（本模块只打 /api/v1 的 JSON 端点）。
- * 摘除办法：删本文件、main.cjs 末尾 everyfilm 段、preload 的 expose、src/douban-fallback.js 里标了
- * 「every.film」的那几处，即完全回到只做豆瓣的版本。
- */
-
 const API_ROOT = 'https://every.film/api/v1';
-const UA = 'CineFlow/3.4.4 (personal desktop app; metadata via every.film)';
+const UA = 'CineFlow/3.4.6 (personal desktop app; metadata via every.film)';
 const SOURCE_HOME = 'https://every.film/';
 const https = require('node:https');
 
 const REQUEST_TIMEOUT_MS = 7000;
-const MIN_REQUEST_GAP_MS = 420; // 个人维护的开放数据项目，比豆瓣那层再慢一点
+const MIN_REQUEST_GAP_MS = 420;
 const CACHE_MAX = 160;
 const SEARCH_TTL_MS = 6 * 60 * 1000;
 const DETAIL_TTL_MS = 24 * 60 * 60 * 1000;
-const BACKOFF_MS = 20 * 1000; // 拿不到 Retry-After 时的默认退避
+const BACKOFF_MS = 20 * 1000;
 const IMAGE_MAX_BYTES = 3 * 1024 * 1024;
 
 function clean(value) {
@@ -50,8 +32,6 @@ function absoluteImage(url) {
   return '';
 }
 
-// 他们自家图片端点支持 ?w= 缩放：不带参数会 302 到原图（实测 414KB / 1000×1500），
-// 卡片位只要 342 宽（实测 ~43KB），首屏和解码成本差一个量级。
 function sizedImage(url, width = 342) {
   const target = absoluteImage(url);
   if (!/^https:\/\/every\.film\/api\/v1\/img\//i.test(target) || target.includes('?w=')) return target;
@@ -104,7 +84,6 @@ function createEveryfilmProvider({ session }) {
     return payload;
   }
 
-  // 单道闸串行 + 最小间隔：条款要求善意使用，不允许高并发洪泛
   function schedule(task) {
     const run = gate.then(async () => {
       if (blockedUntil > Date.now()) await new Promise((resolve) => setTimeout(resolve, blockedUntil - Date.now() + 10));
@@ -117,9 +96,6 @@ function createEveryfilmProvider({ session }) {
     return run;
   }
 
-  // 传输顺序很关键：这台机器的代理出口被 Cloudflare 判 403（实测 直连 200 / 走 7897 代理 403），
-  // 而 Electron 主进程里的 global fetch 仍走 Chromium 网络栈（会吃 session 代理），
-  // 所以"直连"必须用 node:https —— 它是真·Node 网络栈，不套代理。失败再退回 session（照顾只有代理能出网的网络）。
   function nodeRequest(target, { binary = false, hops = 0 } = {}) {
     return new Promise((resolve, reject) => {
       const req = https.get(target, {
@@ -127,7 +103,7 @@ function createEveryfilmProvider({ session }) {
         timeout: REQUEST_TIMEOUT_MS,
         servername: 'every.film'
       }, (res) => {
-        // 图片端点会 302 到签名后的 CDN 地址，必须跟跳转（最多 3 跳）
+
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops < 3) {
           res.resume();
           const next = new URL(res.headers.location, target).toString();
@@ -195,9 +171,6 @@ function createEveryfilmProvider({ session }) {
     };
   }
 
-  // 出口顺序固定：先 node:https 直连（不套代理），只有**网络层失败**（本机必须走代理出网、DNS 不通等）
-  // 才退回 session 走代理。HTTP 4xx 不再换出口 —— 实测走代理那条路会被 Cloudflare 判 403，
-  // 而 403 要等代理跑完才有结果，把它当"可重试"会让队列白等十几秒。
   async function attempt(target, { binary = false } = {}) {
     const order = [transportDirect, transportSession];
     let lastError = '';
@@ -247,7 +220,6 @@ function createEveryfilmProvider({ session }) {
     return result;
   }
 
-  // 图片：渲染层 <img> 走的是 session（会撞代理 403），所以这里用同一套传输把字节取回来转 data URL
   async function image({ url = '' } = {}) {
     const target = clean(url);
     if (!/^https:\/\/every\.film\/api\/v1\/img\//i.test(target)) return { ok: false, error: '地址不是 every.film 图片' };
@@ -312,7 +284,6 @@ function createEveryfilmProvider({ session }) {
     };
   }
 
-  // 中文片名 → 记录 + 各上游 id：标题按归一化全等优先，其次互相包含，年份只作加分不作门槛
   async function lookup({ query = '', year = '', type = '' } = {}) {
     const term = clean(query);
     if (!term) return { ok: false, error: '缺少片名' };

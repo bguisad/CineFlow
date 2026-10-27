@@ -1,0 +1,8 @@
+{
+  "name": "rec-engine-vendored",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/engine.js",
+  "private": true,
+  "description": "CineFlow 内嵌推荐引擎 (rec-engine 构建产物, 零 npm 依赖)"
+}

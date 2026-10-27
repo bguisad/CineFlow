@@ -1,9 +1,3 @@
-/**
- * 投屏面板（v3.4.0 新增，纯增量）。
- * 右侧拉出，实时展示主进程发现的 DLNA / 蓝牙设备，选中后把当前播放源推给设备。
- * 只读取 state.player，绝不改动播放链路；投屏失败只在面板内提示。
- */
-
 import { getBridge } from './incremental-cast.js';
 
 let panel = null;
@@ -23,7 +17,7 @@ function castApi() {
 function currentCastUrl() {
   const player = getBridge()?.state?.player;
   if (!player) return '';
-  // 原始外发地址优先，其次已解析地址；本地代理 loopback 地址无法投给设备
+
   const candidate = player.originalUrl || player.resolvedUrl || player.url || '';
   if (/^https?:\/\//i.test(candidate) && !/127\.0\.0\.1|localhost/i.test(candidate)) return candidate;
   if (/^https?:\/\//i.test(player.url) && !/127\.0\.0\.1|localhost/i.test(player.url)) return player.url;
@@ -88,7 +82,6 @@ function refreshNowPlaying() {
   }
 }
 
-// v3.4.0：只保留必要性文字（状态 / 结果 / 错误），说明性文案一律不占位
 function setHint(text) {
   if (!hintHost) return;
   const value = String(text || '');
@@ -126,7 +119,6 @@ function renderSnapshot(snapshot) {
     dlnaList.innerHTML = dlna.map((device) => deviceRow(device, Boolean(url))).join('');
   }
 
-  // v3.4.0：只把"无线显示器 / 扩展坞"类型的蓝牙设备交给前端
   const bluetooth = (snapshot.bluetooth || [])
     .filter((device) => device.category === 'display' || device.category === 'dock');
   if (!snapshot.bluetoothSupported) {
@@ -215,7 +207,6 @@ export function initCastPanel() {
   });
   document.getElementById('playerCastBtn')?.addEventListener('click', toggleCastPanel);
 
-  // 面板打开时定时回捞蓝牙（Web Bluetooth 主进程回调 + Windows 枚举）
   setInterval(() => {
     if (panel.classList.contains('is-open')) castApi()?.castRefreshBluetooth?.();
   }, 12000);

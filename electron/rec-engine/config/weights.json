@@ -1,0 +1,34 @@
+{
+  "$comment": "rec-engine 配置: 只需覆盖想改的字段, 其余用内置默认值。完整默认值见 src/config.ts",
+  "eventWeights": {
+    "imp": 0.1,
+    "click": 1,
+    "play": 2,
+    "finish": 4,
+    "like": 5,
+    "dislike": -6,
+    "rate": { "scale": 0.5, "max": 5 }
+  },
+  "tierWeights": {
+    "new":   { "itemcf": 0,   "content": 0,   "tag": 1.0, "trending": 0.6,  "realtime": 0,    "sasrec": 0 },
+    "light": { "itemcf": 0,   "content": 0.7, "tag": 0.8, "trending": 0.4,  "realtime": 0.9,  "sasrec": 0 },
+    "warm":  { "itemcf": 0.9, "content": 0.8, "tag": 0.5, "trending": 0.3,  "realtime": 0.9,  "sasrec": 0.8 },
+    "deep":  { "itemcf": 1.0, "content": 0.8, "tag": 0.4, "trending": 0.25, "realtime": 0.9,  "sasrec": 0.9 }
+  },
+  "sceneWeights": {
+    "similar": { "itemcf": 1.0, "content": 0.9, "tag": 0, "trending": 0, "realtime": 0, "sasrec": 0 },
+    "search":  { "itemcf": 0.3, "content": 1.0, "tag": 0.6, "trending": 0, "realtime": 0, "sasrec": 0 }
+  },
+  "rrfK": 60,
+  "mmrLambda": 0.7,
+  "maxConsecutiveSameGenre": 2,
+  "newItemQuotaPerPage": 2,
+  "newItemAgeDays": 60,
+  "recallPerChannel": 200,
+  "itemcfNeighbors": 100,
+  "itemcfSeeds": 50,
+  "recencyHalfLifeDays": 30,
+  "trendingTauHours": 72,
+  "sessionWindowMin": 30,
+  "cacheTtlMin": 5
+}

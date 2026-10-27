@@ -1,20 +1,3 @@
-/**
- * v3.4.2 纯增量：详情页秒开预热。
- *
- * 基线 openDetails()（renderer.js:2020）会先铺骨架、再 await getMovieDetails() ——
- * 所以"点开慢"主要慢在这一次 TMDB 详情请求（约 200~900ms）以及打开后海报/剧照要现拉。
- * 基线自己只在 hover 时 preloadDetails（且并发上限 2、idle 调度），够不到三种场景：
- *   ① 鼠标直接点下去、没停够时间；② 触控板/键盘选中；③ 片源列表要等详情渲染完才开轮询。
- *
- * 这一层做三件事，全部走基线已有的 IPC（因此填的是同一条主进程缓存）：
- *   预热详情：卡片渲染出来就排队（每批最多 8 张、idle 执行、并发 2），悬停/聚焦再补一次；
- *   预热图片：详情回来后，把海报、剧照、前 6 位演员头像、前 8 部推荐海报丢进浏览器缓存；
- *   预热片源：悬停停留 350ms 后，用与基线**完全相同**的 payload 调一次 findMovieResources
- *            （round 16 的 60s 合并缓存会命中），于是点开后片源列表几乎立刻出现。
- *
- * 只在有 TMDB 凭证时预热片源；任何失败静默跳过。摘掉本文件 + incremental-pages.js 的两行挂钩即回退。
- */
-
 const IDLE_TIMEOUT_MS = 800;
 const DETAIL_TTL_MS = 4 * 60 * 1000;
 const DETAIL_CONCURRENCY = 2;
@@ -22,7 +5,7 @@ const RESOURCE_HOVER_DELAY_MS = 350;
 const MAX_PREFETCH_IMAGES = 20;
 const IMAGE_BASE = 'https://image.tmdb.org/t/p/';
 
-const entries = new Map(); // key -> { at, details, resourceAt }
+const entries = new Map();
 const imageSeen = new Set();
 let detailActive = 0;
 let resourceActive = 0;
@@ -94,7 +77,7 @@ async function prefetchResources(details) {
     await window.cineflow.findMovieResources(resourceSearchPayload(details), { cursor: 0, limit: 3 });
     if (entry) entry.resourceAt = Date.now();
   } catch {
-    /* 源站慢/关闭资源查找都不影响 */
+
   } finally {
     resourceActive -= 1;
   }
@@ -147,7 +130,6 @@ function mountDetailPrewarm() {
     hoverCard = null;
   };
 
-  // 渲染即排队：每批最多 8 张，idle 执行，避免抢首屏自己的网络
   const observer = new MutationObserver((records) => {
     const cards = [];
     for (const record of records) {
@@ -161,7 +143,6 @@ function mountDetailPrewarm() {
   });
   observer.observe(document.querySelector('#app'), { childList: true, subtree: true });
 
-  // 首屏已有的卡片
   for (const card of Array.from(document.querySelectorAll('.movie-card')).slice(0, 8)) scheduleCard(card);
 
   document.addEventListener('pointerover', (event) => {

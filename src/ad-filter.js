@@ -1,6 +1,3 @@
-// Strong m3u8 ad filter for the renderer-side hls.js path (direct transport).
-// Mirrors electron/ad-filter.cjs; pure string pass wrapped in try/catch, never breaks playback.
-
 const AD_HINT_RE = /SCTE35|X-SCTE|CUE-OUT|CUE-IN|-AD[-="]|ID=("?)ad/i;
 
 function isUriLine(line) {
@@ -178,7 +175,6 @@ export function createAdFilteringLoader(Hls) {
                 response.data = filterAdsFromM3u8(response.data);
               }
             } catch {
-              // keep the untouched manifest on any filter error
             }
             return originalOnSuccess(response, stats, ctx, networkDetails);
           };

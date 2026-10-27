@@ -1,8 +1,8 @@
 ﻿import './styles.css';
 import { createAdFilteringLoader } from './ad-filter.js';
 import { applyIntentExtras } from './intent-extras.js';
-import { initIncrementalCast } from './incremental-cast.js'; // v3.4.0 纯增量：投屏装配入口
-import { initIncrementalPages } from './incremental-pages.js'; // v3.4.0 纯增量：分类片库 / 播放历史 / 三页切换装配入口
+import { initIncrementalCast } from './incremental-cast.js';
+import { initIncrementalPages } from './incremental-pages.js';
 
 const api = window.cineflow;
 const IMAGE_BASE = 'https://image.tmdb.org/t/p';
@@ -4024,7 +4024,9 @@ function findMovieCard(target) {
 
 function movieFromCard(card) {
   const contentKey = card?.dataset?.contentKey || (card?.dataset?.movieId ? contentKeyOf(card.dataset.movieId, card.dataset.mediaType || 'movie') : '');
-  return contentKey ? state.cardMovies.get(String(contentKey)) : null;
+  // [CineFlow:Rec] 推荐引擎桥: 引擎注入的卡片不在 cardMovies, 回退查询(桥缺失时行为不变)
+  return (contentKey ? state.cardMovies.get(String(contentKey)) : null)
+    || (typeof window !== 'undefined' && typeof window.__cineflowRecCard === 'function' ? window.__cineflowRecCard(String(contentKey || '')) : null);
 }
 
 function setupMovieCardDelegation() {
@@ -4317,14 +4319,10 @@ bindEvents();
 syncResourceSettings();
 loadInitial();
 
-// v3.4.0 纯增量：播放器投屏，异常自动跳过、不影响既有页面
 initIncrementalCast({ api, state, escapeHtml });
 
-// v3.4.0 纯增量：分类片库 / 播放历史 / 三页切换，异常自动跳过、基线首页不进 3D
 initIncrementalPages({ api, state, escapeHtml });
 
-// v3.4.3 第三十一轮纯增量：只是把已有的播放器入口多开一个门（原有 2544 / 3129 两处调用一行未改），
-// 供"无 TMDB 凭证"时豆瓣摘要卡下面那条线路使用 —— 播放器、resolve、代理、广告过滤全是基线那一套。
 window.__cineflowOpenResourcePlayer = (payload) => openResourcePlayer(payload);
 
 

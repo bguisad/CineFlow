@@ -1,12 +1,3 @@
-// v3.4.4 纯增量：首页左上角 "CF" 图标的更新检查气泡。
-// 只读 GitHub 的最新 Release（electron/updater.cjs 直连 api.github.com），
-// 有新版就在图标下方弹一颗鸿蒙风格气泡：显示版本、本机该用的安装包与体积；
-// 点"立即更新"由主进程流式下载 → 静默跑安装包 → 应用退出，全程不跳浏览器。
-// 不做任何破坏性操作：下载只落在 userData/updates，安装只接受那个目录里的 .exe。
-//
-// 摘除办法：删本文件 + incremental-pages.js 里 2 行挂钩 + styles.css 末尾 cf23 段
-//          + main.cjs 末尾 update:* 四个通道 + preload 末尾那一个 expose，即回到上一版。
-
 const AUTO_CHECK_DELAY_MS = 5000;
 const AUTO_CHECK_EVERY_MS = 6 * 3600 * 1000;
 const DISMISS_KEY = 'cineflow:update-dismissed:v1';
@@ -37,7 +28,7 @@ function writeDismissed(version) {
   try {
     window.localStorage.setItem(DISMISS_KEY, String(version || ''));
   } catch {
-    /* 存不下就只在本会话生效 */
+
   }
 }
 
@@ -155,14 +146,13 @@ function openBubble(mode, data = {}) {
   if (!bubble) return;
   update.open = true;
   update.data = data;
-  // 先定位一次：placeBubble 内部要读 getBoundingClientRect/offsetWidth，必然触发一次布局，
-  // 这样首次出现也是从关闭态过渡进来（同帧建节点+加类会被浏览器合并成"直接跳到 opacity:1"）
+
   placeBubble();
   bubble.classList.add('is-open');
   bubble.setAttribute('aria-hidden', 'false');
   document.querySelector('.brand-mark')?.classList.toggle('cf23-has-update', mode === 'update');
   hideProgress();
-  // 版本号只在"有新版"时显示；已是最新还挂着 GitHub 上那个更旧的版本号会让人困惑
+
   setText('.cf23-versions', mode === 'update' && data.latest ? `v${data.latest}` : '');
   const later = document.querySelector('.cf23-later');
   if (later) later.hidden = false;
@@ -254,7 +244,7 @@ async function startUpdate() {
     setText('.cf23-meta', '应用即将重启完成覆盖安装');
     return;
   }
-  // 非 Windows / 绿色版：不静默覆盖，改成在资源管理器里定位安装包
+
   await api.reveal?.({ path: result.path }).catch(() => null);
   setText('.cf23-title', '安装包已下载');
   setText('.cf23-meta', String(install?.error || '请在打开的文件夹里手动安装'));
@@ -284,7 +274,7 @@ export function initUpdateBubble(deps = {}) {
       event.preventDefault();
       runCheck({ force: true });
     });
-    // 自动检查：启动 5s 后一次，之后每 6h 一次；只在主窗口形态下自动弹，且同一版本被"稍后"过就不再打扰
+
     const auto = async () => {
       const result = await runCheck({ silent: true }).catch(() => null);
       if (!result?.hasUpdate || !result.asset) return;

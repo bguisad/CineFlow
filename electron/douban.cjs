@@ -1,32 +1,5 @@
 'use strict';
 
-/**
- * v3.4.2 纯增量：豆瓣元数据（学习 LibreTV 的公开接口用法）。
- *
- * LibreTV（LibreSpark/LibreTV）的服务端实现里有三条豆瓣公开端点：
- *   - 推荐列表 GET https://movie.douban.com/j/search_subjects
- *       ?type=movie|tv&tag=热门&sort=recommend&page_limit=N&page_start=0
- *       必带 UA + Referer: https://movie.douban.com/
- *   - 联想     GET https://movie.douban.com/j/subject_suggest?q=片名
- *       返回 [{id,title,sub_title,year,type,img,episode}]
- *   - 摘要     GET https://movie.douban.com/j/subject_abstract?subject_id=ID
- *       返回 评分/类型/导演/演员/地区/时长/短评，标题里带年份
- * 它把结果在服务端缓存 10 分钟、直连失败才降级到公共 CORS 代理。这里照同样思路，
- * 但请求走 Electron 的 defaultSession（因此继承应用里配置的代理），并且多一个图片中转：
- * 豆瓣图片 CDN 对无 Referer 的请求返回 418、对错误 Referer 返回 403，只有带上
- * `Referer: https://movie.douban.com/` 才是 200，所以海报必须由主进程取字节再回传。
- *
- * 全程 best-effort：任何失败都返回 { ok:false, error }，绝不让调用方抛异常。
- *
- * 第二十八轮加了两件事（都只在这条兜底链里，基线播放/图片链路一行未动）：
- *   - **落盘缓存**（`cacheDir`，由 main.cjs 传 userData 子目录）：热门片单 7 天内直接当新鲜结果用，
- *     海报 30 天内命中就零请求。一次首页要中转 36 张图，反复刷新很容易被豆瓣 CDN 判限流，
- *     一旦限流就是"海报出不来、刷新也没用"；存盘后刷新不再敲豆瓣的门，网络失败还能拿旧的顶上
- *     （stale-if-error）。
- *   - **备用地址重试**：同一张海报在豆瓣 CDN 上有多个子域（img1..img9）与多个尺寸段
- *     （s_/m_/l_ratio_poster、s_poster），某一条被判 418/403 时换一条往往就通，最多再试 3 条。
- */
-
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,8 +21,7 @@ const REQUEST_TIMEOUT_MS = 8000;
 const MIN_REQUEST_GAP_MS = 320;
 const STRIKE_LIMIT = 3;
 const COOLDOWN_MS = 60 * 1000;
-// 落盘缓存：一次首页要中转 36 张海报，反复刷新很容易被豆瓣 CDN 判限流（418/403），
-// 表现就是"海报出不来、刷新也没用"。存盘后刷新零请求，网络挂了还能拿旧的顶上。
+
 const DISK_JSON_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 const DISK_IMAGE_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 const DISK_IMAGE_MAX_FILES = 420;
@@ -79,7 +51,6 @@ function toDoubanImageUrl(url) {
   return String(url || '').replace(/\\\//g, '/').replace(/^http:\/\//i, 'https://');
 }
 
-// 备用图片地址：同一张海报在豆瓣 CDN 上有多个子域与多个尺寸段，任一条被限流时换一条往往就通
 function alternateImageUrls(url) {
   const out = [];
   const base = toDoubanImageUrl(url);
@@ -161,7 +132,7 @@ function createDiskCache(cacheDir) {
     writeImage(url, contentType, base64) {
       const saved = put(imageDir, url, '.json', JSON.stringify({ at: Date.now(), contentType, base64 }));
       if (!saved) return false;
-      // 只做条数封顶，按 mtime 淘汰最旧的；不做 LRU，省一次读
+
       try {
         const names = fs.readdirSync(imageDir);
         if (names.length <= DISK_IMAGE_MAX_FILES) return true;
@@ -170,7 +141,7 @@ function createDiskCache(cacheDir) {
           .sort((a, b) => a.at - b.at)
           .slice(0, names.length - DISK_IMAGE_MAX_FILES);
         for (const entry of stale) fs.unlinkSync(path.join(imageDir, entry.name));
-      } catch { /* 淘汰失败不影响读 */ }
+      } catch {   }
       return true;
     },
   };
@@ -205,7 +176,6 @@ function createDoubanProvider({ session, cacheDir } = {}) {
     };
   }
 
-  // 所有上游请求过同一道闸：最小间隔 320ms；连续被封 3 次就冷却 60s（豆瓣对突发的 418/403 很敏感）
   function schedule(task) {
     const run = gate.then(async () => {
       const wait = Math.max(0, lastRequestAt + MIN_REQUEST_GAP_MS - Date.now());
@@ -221,8 +191,7 @@ function createDoubanProvider({ session, cacheDir } = {}) {
     const cached = jsonCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.payload;
     if (inflight.has(cacheKey)) return inflight.get(cacheKey);
-    // 热门片单落盘后 7 天内直接当新鲜结果用：刷十次首页就是二十次列表请求，没必要每次敲门，
-    // 而一旦被判限流，整条片单会连同海报一起空掉（用户读作"海报没出来、刷新也没用"）。
+
     if (disk.enabled && cacheKey.startsWith('hot:')) {
       const onDisk = disk.readJson(cacheKey, DISK_JSON_MAX_AGE_MS);
       if (onDisk?.payload?.ok) {
@@ -269,7 +238,7 @@ function createDoubanProvider({ session, cacheDir } = {}) {
           if (disk.enabled) disk.writeJson(cacheKey, payload);
           return payload;
         }
-        // 网络/限流失败时拿落盘的旧结果顶上（stale-if-error），总比整条轨道空着好
+
         return stale?.payload?.ok ? stale.payload : payload;
       } catch (error) {
         if (stale?.payload?.ok) return stale.payload;
@@ -327,7 +296,6 @@ function createDoubanProvider({ session, cacheDir } = {}) {
     };
   }
 
-  // rexxar 条目搜索：比 suggest 稳，直接带封面 / 评分 / 年份 / 简介
   async function search({ query, type = 'movie', count = 8 } = {}) {
     const q = cleanText(query).slice(0, 40);
     if (!q) return { ok: true, items: [] };
@@ -403,7 +371,6 @@ function createDoubanProvider({ session, cacheDir } = {}) {
     return best?.item || null;
   }
 
-  // 豆瓣联想只对短查询稳定：长标题、带冒号/副标题的经常直接返回空，需要逐级缩短再试
   function posterQueries(title) {
     const full = cleanText(title);
     const plain = full.replace(/[：:·\-—|｜]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -431,7 +398,7 @@ function createDoubanProvider({ session, cacheDir } = {}) {
         if (match) return { ok: true, url: match.cover, matched: { id: match.id, title: match.title, year: match.year, query: attempt } };
       }
     }
-    // rexxar 也拿不到时才退回老接口
+
     const result = await suggest(query);
     if (!result.ok) return result;
     const match = pickCover(result.items, { title: query, year, type });
@@ -482,7 +449,7 @@ function createDoubanProvider({ session, cacheDir } = {}) {
       const payload = { ok: true, contentType: onDisk.contentType, base64: onDisk.base64 };
       if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
       imageCache.set(target, { expiresAt: Date.now() + IMAGE_TTL_MS, payload });
-      return payload; // 落盘命中：零网络请求，刷新/重启都是即时出图
+      return payload;
     }
     const request = (async () => {
       const remember = (payload) => {
@@ -496,14 +463,14 @@ function createDoubanProvider({ session, cacheDir } = {}) {
           error: error?.name === 'AbortError' ? '图片超时' : String(error?.message || error),
         })));
         if (!payload.ok) {
-          // 同图多子域 / 多尺寸段：某一条被限流时换一条往往就通
+
           for (const alternate of alternateImageUrls(target)) {
             payload = await withImageSlot(() => fetchImageOnce(alternate).catch(() => payload));
             if (payload.ok) break;
           }
         }
         if (payload.ok) remember(payload);
-        // 全失败就用落盘的旧图顶着（stale-if-error），别把卡片留在占位上
+
         return payload.ok || !onDisk ? payload : { ok: true, contentType: onDisk.contentType, base64: onDisk.base64 };
       } catch (error) {
         if (onDisk) return { ok: true, contentType: onDisk.contentType, base64: onDisk.base64 };
