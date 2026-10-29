@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   color-scheme: dark;
   --bg: #070810;
   --panel: rgba(18, 20, 35, 0.72);
@@ -11729,4 +11729,608 @@ label[for="apiCredentialInput"],
   .cf23-bubble.is-open {
     animation: none !important;
   }
+}
+
+/* ============================================================================
+   CineFlow 3.4.7 · cf24 —— 播放器页面左移/被窗口左侧遮挡修复（纯覆盖层）
+   ----------------------------------------------------------------------------
+   根因：#app 上有一条全局 GPU 合成声明 transform: translateZ(0)（见上方
+   "premium motion pass" 段），它让 #app 成为 position: fixed 后代的包含块。
+   .player-modal 是 #app 的子节点，于是"全屏遮罩"实际以 #app 的滚动视口为参照，
+   而 #app 虽然 overflow: hidden，仍是可被程序化滚动的溢出容器
+   （实测 scrollWidth 2130 > clientWidth 1277）。播放时一旦有焦点/scrollIntoView
+   把 #app 的水平滚动位置推到 x（实测 179~198px），整块播放器就跟着左移同一位移，
+   于是左半部分被切到窗口外——正是"往左移一半"的现象。
+   修法：把 #app 的溢出改为 clip（clip 不是滚动容器，任何滚动请求都无法改变
+   它的滚动位置），播放器自然钉在原地；旧内核不支持 clip 时保持基线 hidden。
+   不影响 .app-shell 自身的纵向滚动，也不改动任何基线规则。
+   ============================================================================ */
+@supports (overflow: clip) {
+  #app {
+    overflow: clip;
+  }
+
+  /* 播放中再上一道保险：即使某条新规则把 #app 变回可滚动容器，也不允许它位移。 */
+  body.player-open #app {
+    overflow: clip;
+  }
+}
+
+/* 播放中把遮罩层显式锚回视口坐标系：left/right 双向咬合 + margin 居中，
+   避免任何包含块/滚动偏移把它带偏。 */
+body.player-open .player-modal {
+  position: fixed;
+  inset: 0;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  overscroll-behavior: contain;
+}
+
+/* 播放器内部横向列表自己滚，不要冒泡去带动外层容器。 */
+body.player-open .player-modal .player-shell,
+body.player-open .player-modal .player-stage,
+body.player-open .player-modal .player-episodes {
+  overscroll-behavior: contain;
+}
+
+
+/* ==========================================================================
+   cf25 · 搜索页片源工作台（新增覆盖层，只作用于 #cf25SearchHub 内部）
+   背景模糊体系直接照抄豆瓣兜底元数据详情卡的 cf8-sheet（见本文件 L10705）：
+   background: rgba(4,6,14,.58) + backdrop-filter: blur(10px)，卡片玻璃渐变同源。
+   ========================================================================== */
+
+.cf25-hub {
+  /* 只覆盖标题栏以下的内容区：搜索框（#globalSearch）始终可点、可改词 */
+  position: fixed;
+  top: 76px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 63;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: clamp(18px, 3.2vh, 34px) clamp(20px, 4vw, 56px) clamp(24px, 4vh, 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(4, 6, 14, 0.58);
+  backdrop-filter: blur(10px) saturate(1.04);
+  -webkit-backdrop-filter: blur(10px) saturate(1.04);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+  will-change: opacity;
+  contain: layout paint style;
+}
+
+.cf25-hub.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cf25-hub.is-hidden {
+  display: none;
+}
+
+/* ---- 顶部标题行 ---- */
+
+.cf25-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  animation: cf25Rise 0.22s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.cf25-head-text { min-width: 0; }
+
+.cf25-head h2 {
+  margin: 0;
+  font-size: clamp(17px, 1.5vw, 21px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #f4f5ff;
+}
+
+.cf25-sub {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: rgba(233, 236, 255, 0.52);
+}
+
+.cf25-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: rgba(127, 215, 198, 0.86);
+  white-space: nowrap;
+}
+
+/* ---- 逐源状态条（对应 Lumina SourceStrip） ---- */
+
+.cf25-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 26px;
+}
+
+.cf25-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 246, 226, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 11px;
+  line-height: 1.3;
+  color: rgba(233, 236, 255, 0.66);
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.cf25-source b { font-weight: 500; }
+.cf25-source em { font-style: normal; color: rgba(233, 236, 255, 0.4); font-size: 10.5px; }
+
+.cf25-source.is-loading {
+  border-color: rgba(127, 215, 198, 0.26);
+  background: rgba(127, 215, 198, 0.07);
+  color: rgba(233, 236, 255, 0.86);
+}
+
+.cf25-source.is-done {
+  border-color: rgba(127, 215, 198, 0.20);
+  color: rgba(233, 236, 255, 0.82);
+}
+
+.cf25-source.is-failed {
+  border-color: rgba(169, 75, 95, 0.30);
+  background: rgba(169, 75, 95, 0.08);
+  color: rgba(240, 190, 200, 0.78);
+}
+
+/* ---- 延迟色阶点（<900ms 绿 / <2s 金 / 其余灰，Lumina 同口径） ---- */
+
+.cf25-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cf25-dot, rgba(233, 236, 255, 0.28));
+  box-shadow: 0 0 0 0 rgba(127, 215, 198, 0.32);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cf25-dot.is-idle { --cf25-dot: rgba(233, 236, 255, 0.24); }
+.cf25-dot.is-fast { --cf25-dot: #7fd7c6; box-shadow: 0 0 8px rgba(127, 215, 198, 0.5); }
+.cf25-dot.is-mid { --cf25-dot: #d8b874; box-shadow: 0 0 8px rgba(216, 184, 116, 0.42); }
+.cf25-dot.is-slow { --cf25-dot: rgba(233, 236, 255, 0.34); }
+
+.cf25-source.is-loading .cf25-dot {
+  animation: cf25Pulse 1.05s ease-in-out infinite;
+}
+
+/* ---- 分组列表（对应 Lumina ResultRow） ---- */
+
+.cf25-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.cf25-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(165deg, rgba(20, 24, 44, 0.82), rgba(9, 11, 22, 0.88));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.18s ease, transform 0.18s cubic-bezier(0.22, 0.9, 0.28, 1), box-shadow 0.18s ease;
+  animation: cf25Rise 0.24s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  contain: layout style;
+}
+
+.cf25-group:hover {
+  border-color: rgba(127, 215, 198, 0.24);
+  transform: translateY(-1px);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.cf25-poster {
+  position: relative;
+  flex: 0 0 54px;
+  width: 54px;
+  height: 80px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(160deg, rgba(28, 32, 58, 0.9), rgba(12, 14, 26, 0.95));
+}
+
+.cf25-poster img { width: 100%; height: 100%; object-fit: cover; display: block; animation: cf25Fade 0.28s ease both; }
+
+.cf25-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: rgba(233, 236, 255, 0.28);
+}
+
+.cf25-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+
+.cf25-body h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: #eef0ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf25-meta { margin: 0; font-size: 11px; color: rgba(233, 236, 255, 0.48); }
+
+.cf25-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 1px; }
+
+.cf25-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(233, 236, 255, 0.76);
+  font-size: 10.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.cf25-chip span { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf25-chip em { font-style: normal; font-size: 10px; color: rgba(233, 236, 255, 0.38); }
+
+.cf25-chip:hover {
+  border-color: rgba(127, 215, 198, 0.34);
+  background: rgba(127, 215, 198, 0.10);
+  color: #f2f4ff;
+  transform: translateY(-1px);
+}
+
+.cf25-chip:active { transform: translateY(0) scale(0.98); }
+.cf25-chip.is-busy { opacity: 0.6; pointer-events: none; }
+.cf25-chip.is-more { cursor: default; color: rgba(233, 236, 255, 0.42); }
+
+.cf25-chip.is-blocked {
+  border-color: rgba(169, 75, 95, 0.5);
+  color: rgba(240, 190, 200, 0.9);
+}
+
+.cf25-chip.is-blocked::after {
+  content: attr(data-cf25-flash);
+  position: absolute;
+  transform: translateY(-30px);
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(9, 11, 22, 0.94);
+  border: 1px solid rgba(169, 75, 95, 0.4);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.cf25-related {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 7px 15px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 215, 198, 0.28);
+  background: rgba(127, 215, 198, 0.09);
+  color: rgba(215, 245, 238, 0.94);
+  font-size: 11.5px;
+  font-family: inherit;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.cf25-related:hover {
+  border-color: rgba(127, 215, 198, 0.5);
+  background: rgba(127, 215, 198, 0.16);
+  transform: translateY(-1px);
+}
+
+.cf25-related:active { transform: translateY(0) scale(0.98); }
+
+/* ---- 骨架（对应 Lumina RowSkeleton，4 行） ---- */
+
+.cf25-skeleton { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
+.cf25-skeleton.is-hidden { display: none; }
+
+.cf25-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.cf25-skeleton-row i {
+  flex: 0 0 54px;
+  height: 80px;
+  border-radius: 10px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.045));
+  background-size: 220% 100%;
+  animation: cf25Shimmer 1.35s linear infinite;
+}
+
+.cf25-skeleton-row span { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; }
+
+.cf25-skeleton-row b,
+.cf25-skeleton-row em {
+  display: block;
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.045));
+  background-size: 220% 100%;
+  animation: cf25Shimmer 1.35s linear infinite;
+}
+
+.cf25-skeleton-row b { width: 42%; }
+.cf25-skeleton-row em { width: 68%; height: 7px; animation-delay: 0.12s; }
+
+/* ---- 空态（对应 Lumina EmptyState + PrimaryActionButton） ---- */
+
+.cf25-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: clamp(34px, 9vh, 88px) 0;
+  flex: 0 0 auto;
+  text-align: center;
+  animation: cf25Rise 0.24s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+.cf25-empty.is-hidden { display: none; }
+
+.cf25-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(233, 236, 255, 0.55);
+  letter-spacing: 0.01em;
+}
+
+.cf25-action {
+  padding: 9px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 215, 198, 0.30);
+  background: rgba(127, 215, 198, 0.10);
+  color: rgba(215, 245, 238, 0.94);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.cf25-action:hover {
+  border-color: rgba(127, 215, 198, 0.52);
+  background: rgba(127, 215, 198, 0.17);
+  transform: translateY(-1px);
+}
+
+.cf25-action:active { transform: translateY(0) scale(0.98); }
+
+/* ---- 历史词 chip 行（对应 Lumina FlowRow 历史） ---- */
+
+.cf25-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.cf25-history.is-hidden { display: none; }
+
+.cf25-history-label {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(233, 236, 255, 0.34);
+  margin-right: 2px;
+}
+
+.cf25-history-chip {
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 246, 226, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(233, 236, 255, 0.72);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.cf25-history-chip:hover {
+  border-color: rgba(216, 184, 116, 0.32);
+  background: rgba(216, 184, 116, 0.10);
+  color: #f4f1e8;
+  transform: translateY(-1px);
+}
+
+.cf25-history-chip:active { transform: translateY(0) scale(0.98); }
+
+/* ---- 动画 ---- */
+
+@keyframes cf25Rise {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes cf25Fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cf25Pulse {
+  0%, 100% { opacity: 0.45; box-shadow: 0 0 0 0 rgba(127, 215, 198, 0.30); }
+  50% { opacity: 1; box-shadow: 0 0 8px 1px rgba(127, 215, 198, 0.40); }
+}
+
+@keyframes cf25Shimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+/* ---- 收缩布局 ---- */
+
+@media (max-width: 900px) {
+  .cf25-hub { padding-left: 18px; padding-right: 18px; }
+  .cf25-group { flex-wrap: wrap; }
+  .cf25-related { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf25-hub,
+  .cf25-head,
+  .cf25-group,
+  .cf25-empty,
+  .cf25-poster img { animation: none !important; transition: none !important; }
+  .cf25-skeleton-row i,
+  .cf25-skeleton-row b,
+  .cf25-skeleton-row em { animation: none !important; }
+}
+
+
+/* ===== cf25 补丁（第 42 轮）：海报中转占位态 + 搜索页淡入更丝滑 ===== */
+
+/* 海报由主进程中转成 data URL 后填入；未到位时只显示占位文案，不占位跳动 */
+.cf25-poster img.cf25-poster-img {
+  opacity: 0;
+  transition: opacity 0.26s ease;
+}
+
+.cf25-poster img.cf25-poster-img.is-loaded { opacity: 1; }
+
+.cf25-poster img.cf25-poster-img.is-pending { opacity: 0; }
+
+.cf25-poster img.cf25-poster-img.is-failed { display: none; }
+
+.cf25-poster .cf25-ph {
+  transition: opacity 0.2s ease;
+}
+
+/* 淡入加一点点位移，观感上是"浮起来"而不是"闪出来" */
+.cf25-hub {
+  transition: opacity 0.17s ease;
+}
+
+.cf25-hub.is-open .cf25-head,
+.cf25-hub.is-open .cf25-groups,
+.cf25-hub.is-open .cf25-empty,
+.cf25-hub.is-open .cf25-history {
+  animation: cf25SheetIn 0.24s cubic-bezier(0.22, 0.68, 0.32, 1) both;
+}
+
+@keyframes cf25SheetIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf25-hub.is-open .cf25-head,
+  .cf25-hub.is-open .cf25-groups,
+  .cf25-hub.is-open .cf25-empty,
+  .cf25-hub.is-open .cf25-history {
+    animation: none;
+  }
+  .cf25-hub { transition: none; }
+  .cf25-poster img.cf25-poster-img { transition: none; }
+}
+
+
+/* ===== cf25 补丁（第 43 轮）：相关 → 详情压在搜索页之上 ===== */
+
+/* #detailPanel 基线是 z-index:30，搜索页是 63；抬到 70 让它从搜索页之上滑出。
+   只在 body.cf25-detail-lift 期间生效，面板一收就撤（见 watchDetailClose），
+   所以其它页面/其它入口的层级完全不受影响。 */
+body.cf25-detail-lift .detail-panel {
+  z-index: 70;
+}
+
+/* 豆瓣兜底卡基线是 z-index:64，本来就压在搜索页（63）之上，无需改动；这里只确保
+   它和抬升后的侧栏不会互相压住。 */
+body.cf25-detail-lift .cf8-sheet {
+  z-index: 72;
+}
+
+/* 搜索页本身在被详情压住时不做任何位移/缩放，避免两层同时动画导致的抖动 */
+body.cf25-detail-lift .cf25-hub {
+  pointer-events: none;
+}
+
+
+/* ===== cf25 补丁（第 44 轮）：影视展示条改为磨砂玻璃 ===== */
+
+/* 基线（第 43 轮前）是 near-opaque 深色渐变：
+     linear-gradient(165deg, rgba(20,24,44,.82), rgba(9,11,22,.88))
+   在深色背景上会读成一块实心色板，「有点重」。这里减薄透明度、加一层背景模糊，
+   让它读起来是悬在模糊背景上的玻璃片，而不是一块涂料。只覆盖颜色/模糊相关属性，
+   尺寸、圆角、布局、动效一律继承基线。 */
+.cf25-group {
+  background: linear-gradient(165deg, rgba(30, 36, 62, 0.34), rgba(11, 14, 27, 0.44));
+  border-color: rgba(255, 255, 255, 0.085);
+  -webkit-backdrop-filter: blur(20px) saturate(1.16);
+  backdrop-filter: blur(20px) saturate(1.16);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: border-color 0.18s ease, transform 0.18s cubic-bezier(0.22, 0.9, 0.28, 1),
+    box-shadow 0.18s ease, background 0.18s ease;
+}
+
+/* 玻璃顶部的一道内高光：制造「厚玻璃边缘」的观感，不吃事件 */
+.cf25-group::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 46%);
+}
+
+.cf25-group:hover {
+  background: linear-gradient(165deg, rgba(36, 44, 74, 0.42), rgba(13, 17, 32, 0.5));
+  border-color: rgba(127, 215, 198, 0.22);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+/* 海报小图也跟着减一档，避免它比卡片本体更「实」 */
+.cf25-group .cf25-poster {
+  background: linear-gradient(160deg, rgba(34, 40, 70, 0.62), rgba(13, 16, 29, 0.72));
+}
+
+/* 不支持 backdrop-filter 的环境退回一个略薄但仍然可读的底色，不会变成透明板 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .cf25-group {
+    background: linear-gradient(165deg, rgba(24, 29, 50, 0.72), rgba(10, 13, 25, 0.8));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf25-group { transition: none; }
 }

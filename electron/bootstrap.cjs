@@ -200,6 +200,18 @@ try {
     telemetry.record('service.installed', { id: 'source-providers' });
   }, { deps: ['source-engine'] });
 
+  // v3.4.7 纯增量：搜索页片源中枢（关键词横向扫源 → 按片名归并成搜索页分组）。
+  // 只做「发现」，不做线路水合；点击分组时才走基线 findMovieFiltered 取可播地址。
+  serviceRegistry.registerService('search-hub', ({ ipcMain, session }) => {
+    const result = require('./search-hub.cjs').installSearchHub({
+      ipcMain,
+      session,
+      log: (...args) => console.log('[CineFlow:SearchHub]', ...args)
+    });
+    if (!result) throw new Error('installSearchHub 返回 false');
+    telemetry.record('service.installed', { id: 'search-hub' });
+  }, { deps: ['source-engine'] });
+
   // 注：resolver-v2（播放页解析增强）按「完全对齐 3.4.4」要求撤出包装链，不再装配。
 
   // 周期维护：缓存清扫 + 遥测摘要（纯本地）

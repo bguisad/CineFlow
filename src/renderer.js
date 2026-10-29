@@ -1,4 +1,4 @@
-﻿import './styles.css';
+import './styles.css';
 import { createAdFilteringLoader } from './ad-filter.js';
 import { applyIntentExtras } from './intent-extras.js';
 import { initIncrementalCast } from './incremental-cast.js';
@@ -4324,6 +4324,7 @@ initIncrementalCast({ api, state, escapeHtml });
 initIncrementalPages({ api, state, escapeHtml });
 
 window.__cineflowOpenResourcePlayer = (payload) => openResourcePlayer(payload);
+window.__cineflowOpenDetails = (movieId, movie) => openDetails(movieId, movie);
 
 
 

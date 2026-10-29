@@ -12,6 +12,8 @@ import { initDualSearch } from './dual-search.js';
 import { initDoubanFallback } from './douban-fallback.js';
 import { initUpdateBubble } from './update-bubble.js';
 import { initTmdbWizard } from './tmdb-wizard.js';
+import { initPlayerAnchor } from './player-anchor.js';
+import { initSearchWorkbench } from './search-workbench.js';
 
 const ISLAND_CLASSES = ['island-mode', 'island-expanded-mode', 'island-docked-mode'];
 const PRELOAD_DELAY_MS = 2200;
@@ -34,6 +36,8 @@ function mountPages(deps) {
   initDoubanFallback({ api, state });
   initUpdateBubble({ api, state });
   initTmdbWizard({ api, state });
+  initPlayerAnchor({ api, state });
+  initSearchWorkbench({ api, state, escapeHtml });
 
   const library = createLibraryPage({ api, state, escapeHtml });
   const history = createHistoryPage({ state, escapeHtml, resume: createHistoryResume({ state }) });

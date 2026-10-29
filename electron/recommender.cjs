@@ -10,6 +10,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
+const { genreNamesFromIds } = require('./rec-genres.cjs');
 
 const USER_ID = 'cineflow-local';
 const REBUILD_EVENT_THRESHOLD = 150;
@@ -39,6 +40,48 @@ function asarReal(p) {
   return p.replace('app.asar', 'app.asar.unpacked');
 }
 
+/** 顺序保留的类型名合并（去重），供 genres 字符串与 genreIds 解析结果对齐 */
+function mergeGenres(a = [], b = []) {
+  const out = [];
+  const seen = new Set();
+  for (const name of [...a, ...b]) {
+    const value = typeof name === 'string' ? name.trim() : '';
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/** 物料字段级合并：点击卡片携带的薄元数据不得覆盖已有富元数据（类型/简介/演员/评分） */
+function mergeItemMeta(prev, next) {
+  if (!prev) return next;
+  const merged = { ...prev, ...next };
+  merged.genres = mergeGenres(prev.genres, next.genres);
+  if (!next.overview && prev.overview) merged.overview = prev.overview;
+  const prevActors = Array.isArray(prev.actors) ? prev.actors : [];
+  const nextActors = Array.isArray(next.actors) ? next.actors : [];
+  merged.actors = nextActors.length ? nextActors : prevActors;
+  if (!next.overview && !merged.overview) delete merged.overview;
+  if (!merged.actors || !merged.actors.length) delete merged.actors;
+  if (!merged.releaseDate && prev.releaseDate) merged.releaseDate = prev.releaseDate;
+  if (!merged.rating && prev.rating) merged.rating = prev.rating;
+  if (!merged.title && prev.title) merged.title = prev.title;
+  const prevExtra = prev.extra || {};
+  const nextExtra = next.extra || {};
+  merged.extra = { ...prevExtra, ...nextExtra };
+  // extra 里空值/占位不要覆盖旧值
+  for (const [key, value] of Object.entries(merged.extra)) {
+    if (value === undefined || value === null || value === '') {
+      if (prevExtra[key] !== undefined) merged.extra[key] = prevExtra[key];
+      else delete merged.extra[key];
+    }
+  }
+  if (!Object.keys(merged.extra).length) delete merged.extra;
+  if (!merged.genres.length) merged.genres = [];
+  return merged;
+}
+
 /** CineFlow 卡片（TMDB compactMovie 形状或豆瓣 cf8 条目）→ 引擎 ItemMeta */
 function cardToItemMeta(card) {
   if (!card || card.id === undefined || card.id === null) return null;
@@ -49,7 +92,10 @@ function cardToItemMeta(card) {
     : contentKeyOf(mediaType, card.id);
   if (!String(id).trim()) return null;
 
-  const genres = Array.isArray(card.genres) ? card.genres.filter((g) => typeof g === 'string' && g) : [];
+  // 类型名是引擎标签路/画像/重排的主信号。列表与详情卡片多数只带数字 genreIds,
+  // 这里按 mediaType 还原成中文类型名（与 TMDB zh-CN 名称一致），与 onboarding 兴趣名对齐。
+  const rawGenres = Array.isArray(card.genres) ? card.genres.filter((g) => typeof g === 'string' && g) : [];
+  const genres = mergeGenres(rawGenres, genreNamesFromIds(card.genreIds, mediaType));
   const extra = {};
   const poster = card.posterPath || card.cf8Cover;
   if (poster) extra.posterPath = String(poster);
@@ -104,17 +150,122 @@ function itemToCard(meta) {
   };
 }
 
+/**
+ * 引擎初始化守护：工件目录不可写（杀软占用 / 目录权限 / 并发句柄）时，
+ * 原实现会让 init() 在 ensureArtifactDir() 抛错，进而把整块推荐+埋点静默停用。
+ * 这里改为降级为纯内存模式继续跑：召回、画像、重排全部可用，只是工件不落盘。
+ * 一切正常时行为与原来完全一致（首次 init 成功即返回）。
+ */
+function initEngineResilient(engine, log) {
+  try {
+    return engine.init();
+  } catch (err) {
+    try {
+      const store = engine.store;
+      engine.buildState(store.loadItems(), store.loadEvents(), store.loadOnboarding(), {
+        buildIfMissing: false,
+      });
+      engine.__cfDegraded = true;
+      log('工件落盘不可用，已降级为纯内存模式继续运行:', err && err.message);
+      return engine;
+    } catch (err2) {
+      log('引擎降级初始化亦失败:', err2 && err2.message);
+      throw err;
+    }
+  }
+}
+
 async function createRecommenderCore({ dataDir, engineEntry, configPath, log = () => {} } = {}) {
   const entry = asarReal(engineEntry || path.join(__dirname, 'rec-engine', 'dist', 'engine.js'));
   // Windows 绝对路径必须转 file:// URL, 否则 ESM loader 报 ERR_UNSUPPORTED_ESM_URL_SCHEME
   const { RecEngine } = await import(pathToFileURL(entry).href);
-  const engine = new RecEngine(dataDir, configPath ? asarReal(configPath) : undefined).init();
+  const engine = initEngineResilient(
+    new RecEngine(dataDir, configPath ? asarReal(configPath) : undefined),
+    log
+  );
   const state = { eventsSinceRebuild: 0, lastRebuildAt: Date.now() };
+
+  /* ---------- 存量物料迁移（一次性，版本号幂等） ---------- */
+  // 3.4.6 及以前入库的 items.json 里 genres 全是 []（卡片只带 genreIds，宿主没解析），
+  // 导致 TagChannel 空跑、画像 genreWeights 空、重排 Jaccard 退化为常数。
+  // 这里按 schema 版本做一次：能从 extra.genreIds 还原的先还原，然后强制重建工件。
+  const CATALOG_SCHEMA_VERSION = 2;
+  const schemaPath = path.join(dataDir, 'catalog-schema.json');
+
+  function readSchemaVersion() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+      const version = Number(raw && raw.version);
+      return Number.isFinite(version) ? version : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function repairCatalogGenres() {
+    let catalog = [];
+    try {
+      catalog = engine.catalog || [];
+    } catch {
+      return { items: 0, repaired: 0 };
+    }
+    if (!catalog.length) return { items: 0, repaired: 0 };
+    let repaired = 0;
+    const next = catalog.map((item) => {
+      const current = Array.isArray(item.genres) ? item.genres : [];
+      const extra = item.extra || {};
+      const ids = typeof extra.genreIds === 'string' && extra.genreIds ? extra.genreIds : [];
+      const fallback = genreNamesFromIds(ids, String(item.id).startsWith('tv:') ? 'tv' : 'movie');
+      const merged = mergeGenres(current, fallback);
+      if (merged.length === current.length) return item;
+      repaired += 1;
+      return { ...item, genres: merged };
+    });
+    if (repaired) engine.upsertItems(next);
+    return { items: catalog.length, repaired };
+  }
+
+  function migrateCatalog() {
+    const version = readSchemaVersion();
+    if (version >= CATALOG_SCHEMA_VERSION) return { skipped: true, version };
+    let stats = { items: 0, repaired: 0 };
+    try {
+      stats = repairCatalogGenres();
+      // 类型名参与 TF-IDF 文本与标签向量，物料语义变了必须重建工件
+      engine.rebuild();
+    } catch (err) {
+      log('存量物料迁移失败(下次启动重试):', err && err.message);
+      return { failed: true, items: stats.items, repaired: stats.repaired };
+    }
+    try {
+      fs.writeFileSync(
+        schemaPath,
+        JSON.stringify({ version: CATALOG_SCHEMA_VERSION, at: Date.now(), ...stats }),
+        'utf8'
+      );
+    } catch (err) {
+      log('catalog-schema.json 写入失败:', err && err.message);
+    }
+    log(
+      '存量物料迁移完成: 物料 ' + stats.items + ' 条，补全类型 ' + stats.repaired + ' 条，工件已重建'
+    );
+    return { items: stats.items, repaired: stats.repaired, version: CATALOG_SCHEMA_VERSION };
+  }
+
+  const migration = migrateCatalog();
 
   function upsertCards(cards) {
     const metas = (cards || []).map(cardToItemMeta).filter(Boolean);
-    if (metas.length) engine.upsertItems(metas);
-    return metas.length;
+    if (!metas.length) return 0;
+    // 引擎 upsertItems 是整对象覆盖：点击态薄卡片会抹掉 seed 阶段写入的类型/简介。
+    // 在宿主侧先与现有物料做字段级合并，再交给引擎落盘，基线引擎代码保持不动。
+    let existing = new Map();
+    try {
+      existing = new Map((engine.catalog || []).map((it) => [it.id, it]));
+    } catch { /* 目录读取失败时退化为直接写入 */ }
+    const merged = metas.map((meta) => mergeItemMeta(existing.get(meta.id), meta));
+    engine.upsertItems(merged);
+    return merged.length;
   }
 
   function maybeRebuild() {
@@ -175,8 +326,12 @@ async function createRecommenderCore({ dataDir, engineEntry, configPath, log = (
         if (!fav || fav.id === undefined) continue;
         pushCard({
           ...fav,
-          // favorites 快照只有 genreIds(数字), 借 genreNames 映射为类型名供标签路使用
-          genres: (fav.genreIds || []).map((gid) => genreNames[gid] || genreNames[String(gid)]).filter(Boolean),
+          // favorites 快照只有 genreIds(数字)：先按渲染层给的 genreNames 映射，
+          // 缺表项（未配置 TMDB 密钥时 genres 接口拿不到）回退到宿主的本地类型表。
+          genres: mergeGenres(
+            (fav.genreIds || []).map((gid) => genreNames[gid] || genreNames[String(gid)]).filter(Boolean),
+            genreNamesFromIds(fav.genreIds, fav.mediaType === 'tv' ? 'tv' : 'movie')
+          ),
         });
         events.push({ key: `${fav.mediaType === 'tv' ? 'tv' : 'movie'}:${fav.id}`, type: 'like', ts: now });
       }
@@ -196,6 +351,9 @@ async function createRecommenderCore({ dataDir, engineEntry, configPath, log = (
           posterPath: item.posterPath,
           year: item.year,
           voteAverage: 0,
+          // 历史快照若带 genreIds（新版本会写入），一并喂给类型管线
+          genreIds: Array.isArray(item.genreIds) ? item.genreIds : [],
+          genres: Array.isArray(item.genres) ? item.genres : [],
         });
         const ratio = item.duration > 0 ? (item.progress || 0) / item.duration : 0;
         events.push({
@@ -253,7 +411,13 @@ async function createRecommenderCore({ dataDir, engineEntry, configPath, log = (
     },
 
     status() {
-      return { items: engine.catalog.length, ...engine.metrics(), userId: USER_ID };
+      return {
+        items: engine.catalog.length,
+        ...engine.metrics(),
+        userId: USER_ID,
+        migration,
+        degraded: engine.__cfDegraded === true,
+      };
     },
 
     rebuild() {
@@ -310,6 +474,9 @@ module.exports = {
   USER_ID,
   cardToItemMeta,
   itemToCard,
+  mergeGenres,
+  mergeItemMeta,
+  __test__: { mergeGenres, mergeItemMeta },
   createRecommenderCore,
   registerRecIpc,
   initRecommender,
